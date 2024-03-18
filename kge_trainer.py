@@ -10,8 +10,9 @@ from collections import defaultdict as ddict
 from dataloader import get_task_dataset, get_task_dataset_entire, \
     TrainDataset, TestDataset, TestDataset_Entire
 from kge_model import KGEModel
+from LLM_kge_model import LLMKGEModel
 
-
+#先研究这个，根据这个再弄个和isolation并列的类做比对，先别想联邦的问题
 class KGETrainer():
     def __init__(self, args, data):
         self.args = args
@@ -20,13 +21,18 @@ class KGETrainer():
         if args.setting == 'Collection':
             train_dataset, valid_dataset, test_dataset, nrelation, nentity = get_task_dataset_entire(data, args)
         elif args.setting == 'Isolation':
+            #dataset就是正例、负例、idx
             train_dataset, valid_dataset, test_dataset, nrelation, nentity = get_task_dataset(data, args)
+        elif args.setting == 'LLM':
+            #dataset就是正例、负例、idx
+            train_dataset, valid_dataset, test_dataset, nrelation, nentity = get_task_dataset_entire(data, args)
 
         self.nentity = nentity
         self.nrelation = nrelation
 
-        # embedding
-        embedding_range = torch.Tensor([(args.gamma + args.epsilon) / args.hidden_dim])
+        # embedding 向量维度姑且让两者都一致吧
+        embedding_range = torch.Tensor([(args.gamma + args.epsilon) / args.hidden_dim]) # tensor([0.0938])
+        #print(embedding_range)
         if args.model in ['RotatE', 'ComplEx']:
             self.entity_embedding = torch.zeros(self.nentity, args.hidden_dim * 2).to(args.gpu).requires_grad_()
         else:
@@ -78,9 +84,27 @@ class KGETrainer():
                 batch_size = args.test_batch_size,
                 collate_fn=TestDataset.collate_fn
             )
+        elif args.setting == 'LLM':
+            self.valid_dataloader = DataLoader(
+                valid_dataset,
+                batch_size=args.test_batch_size,
+                collate_fn=TestDataset_Entire.collate_fn
+            )
 
-        # model
+            self.test_dataloader = DataLoader(
+                test_dataset,
+                batch_size=args.test_batch_size,
+                collate_fn=TestDataset_Entire.collate_fn
+            )
+
+        # model 在这里尝试加入LLMModel
+        # if(args.usingLLM):
+        #     self.kge_model = LLMKGEModel(args,args.LLMModel)
+        # else:
         self.kge_model = KGEModel(args, args.model)
+        
+        if args.setting == 'LLM':
+            self.LLM_kge_model = LLMKGEModel(args,args.LLMModel)
 
         self.optimizer = torch.optim.Adam(
             [{'params': self.entity_embedding},
@@ -124,6 +148,7 @@ class KGETrainer():
 
         for epoch in range(self.args.max_epoch):
             losses = []
+            #注意这里仅仅是将模型设置为训练模式，没有开始训练！！
             self.kge_model.train()
             for batch in self.train_dataloader:
 
@@ -131,7 +156,8 @@ class KGETrainer():
 
                 positive_sample = positive_sample.to(self.args.gpu)
                 negative_sample = negative_sample.to(self.args.gpu)
-
+#pytorch nn里面的forward函数就是前向传播
+#那么这里第一个negetive_score就是直接获得了打分
                 negative_score = self.kge_model((positive_sample, negative_sample),
                                                   self.relation_embedding,
                                                   self.entity_embedding)
@@ -141,6 +167,7 @@ class KGETrainer():
 
                 positive_score = self.kge_model(positive_sample,
                                                 self.relation_embedding, self.entity_embedding, neg=False)
+
 
                 positive_score = F.logsigmoid(positive_score).squeeze(dim=1)
 
@@ -192,32 +219,53 @@ class KGETrainer():
         elif self.args.setting == 'Isolation':
             eval_res = self.evaluate(eval_split='test')
 
+#这里前面默认取的是best模型
     def evaluate_multi(self, eval_split='valid'):
 
         if eval_split == 'test':
             dataloader = self.test_dataloader
         elif eval_split == 'valid':
             dataloader = self.valid_dataloader
-
+        #自动生成的字典且元素是列表
         client_ranks = ddict(list)
         all_ranks = []
         for batch in dataloader:
 
-            triplets, labels, triple_idx = batch
+            triplets, labels, triple_idx = batch #[16,3],[16,14541],[16]
+            #print(triple_idx.shape)
             triplets, labels = triplets.to(self.args.gpu), labels.to(self.args.gpu)
             head_idx, rel_idx, tail_idx = triplets[:, 0], triplets[:, 1], triplets[:, 2]
+            #得到score
             pred = self.kge_model((triplets, None),
                                    self.relation_embedding,
-                                   self.entity_embedding)
+                                   self.entity_embedding)# [16,14541]!形状的意义？16是测试集batch大小。我傻掉了，kgemodel里的score也是这个形状
+            #我测了你这种写法，这里原来是用的else里面负样本集是none的情况，意义是获得所有实体作为tail的打分（head和relation是固定）
+            #每一个三元组都有14541个打分
+            print(tail_idx.shape)
+            #一个16维的0到16整数的一维数组
             b_range = torch.arange(pred.size()[0], device=self.args.gpu)
-            target_pred = pred[b_range, tail_idx]
+
+            #就是取tail_idx对应实体作为tail的score，相当于正例（1个正确的，n-1个错误的）
+            target_pred = pred[b_range, tail_idx] #16的一维数组
+            # if len(tail_idx)==5:
+            #     print(pred)
+            #     print(b_range)
+            #     print(target_pred)
+            #print(target_pred)
+            #这行代码的目的是将 pred 中对应于 labels 中 True 值的位置的数值替换为 -10000000 为了排除某些实体，不是很懂
             pred = torch.where(labels.byte(), -torch.ones_like(pred) * 10000000, pred)
             pred[b_range, tail_idx] = target_pred
 
+            #先降序再升序得到本batch中正确三元组的排名
             ranks = 1 + torch.argsort(torch.argsort(pred, dim=1, descending=True),
                                       dim=1, descending=False)[b_range, tail_idx]
 
             ranks = ranks.float()
+            # 012345
+            # 528631
+            # 230415
+            # 240135 升序排列的序号 还真是，这样获得了真正的rank
+
 
             for i in range(self.args.num_client):
                 client_ranks[i].extend(ranks[triple_idx == i].tolist())
@@ -308,5 +356,80 @@ class KGETrainer():
 
         test_rst_file = os.path.join(self.args.log_dir, self.args.name + '.test.rst')
         pickle.dump(results_list, open(test_rst_file, 'wb'))
+
+        return results
+    
+
+
+
+    def LLMevaluate(self, eval_split='valid'):
+        if eval_split == 'test':
+            dataloader = self.test_dataloader
+        elif eval_split == 'valid':
+            dataloader = self.valid_dataloader
+        #自动生成的字典且元素是列表
+        client_ranks = ddict(list)
+        all_ranks = []
+        for batch in dataloader:
+
+            triplets, labels, triple_idx = batch #[16,3],[16,14541],[16]
+            #print(triple_idx.shape)
+            triplets, labels = triplets.to(self.args.gpu), labels.to(self.args.gpu)
+            head_idx, rel_idx, tail_idx = triplets[:, 0], triplets[:, 1], triplets[:, 2]
+            #得到score
+            pred = self.LLM_kge_model((triplets, None))
+            #pred = torch.rand((len(triple_idx), 14541),device=self.args.gpu)
+            #print(tail_idx.shape)
+            #一个16维的0到16整数的一维数组
+            b_range = torch.arange(pred.size()[0], device=self.args.gpu)
+            #就是取tail_idx对应实体作为tail的score，相当于正例（1个正确的，n-1个错误的）
+            target_pred = pred[b_range, tail_idx] #16的一维数组
+            #print(target_pred)
+            #这行代码的目的是将 pred 中对应于 labels 中 True 值的位置的数值替换为 -10000000 为了排除某些实体，不是很懂
+            pred = torch.where(labels.byte(), -torch.ones_like(pred) * 10000000, pred)
+            pred[b_range, tail_idx] = target_pred
+
+            #print(torch.argsort(pred, dim=1, descending=True)[0])
+            #print(torch.argsort(torch.argsort(pred, dim=1, descending=True),dim=1, descending=False)[0])
+            #先降序再升序得到本batch中正确三元组的排名
+            ranks = 1 + torch.argsort(torch.argsort(pred, dim=1, descending=True),
+                                        dim=1, descending=False)[b_range, tail_idx]
+
+            ranks = ranks.float()
+            # 012345
+            # 528631
+            # 230415
+            # 240135 升序排列的序号 还真是，这样获得了真正的rank
+
+
+            for i in range(self.args.num_client):
+                client_ranks[i].extend(ranks[triple_idx == i].tolist())
+
+            all_ranks.extend(ranks.tolist())
+
+        for i in range(self.args.num_client):
+            results = ddict(float)
+            ranks = torch.tensor(client_ranks[i])
+            count = torch.numel(ranks)
+            results['count'] = count
+            results['mr'] = torch.sum(ranks).item() / count
+            results['mrr'] = torch.sum(1.0 / ranks).item() / count
+            for k in [1, 5, 10]:
+                results['hits@{}'.format(k)] = torch.numel(ranks[ranks <= k]) / count
+            logging.info('mrr: {:.4f}, hits@1: {:.4f}, hits@5: {:.4f}, hits@10: {:.4f}'.format(
+                results['mrr'], results['hits@1'],
+                results['hits@5'], results['hits@10']))
+
+        results = ddict(float)
+        ranks = torch.tensor(all_ranks)
+        count = torch.numel(ranks)
+        results['count'] = count
+        results['mr'] = torch.sum(ranks).item() / count
+        results['mrr'] = torch.sum(1.0 / ranks).item() / count
+        for k in [1, 5, 10]:
+            results['hits@{}'.format(k)] = torch.numel(ranks[ranks <= k]) / count
+        logging.info('mrr: {:.4f}, hits@1: {:.4f}, hits@5: {:.4f}, hits@10: {:.4f}'.format(
+            results['mrr'], results['hits@1'],
+            results['hits@5'], results['hits@10']))
 
         return results

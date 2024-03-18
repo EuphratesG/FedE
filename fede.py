@@ -6,6 +6,8 @@ from kge_model import KGEModel
 from torch import optim
 import torch.nn.functional as F
 
+from transformers import LlamaForCausalLM,LlamaModel,AutoTokenizer
+
 
 class Server(object):
     def __init__(self, args, nentity):
@@ -20,6 +22,7 @@ class Server(object):
             a=-embedding_range.item(),
             b=embedding_range.item()
         )
+        #print(ent_embed)
         self.nentity = nentity
 
     def send_emb(self):
@@ -43,8 +46,9 @@ class Server(object):
 
 
 class Client(object):
+    #注意client对象创建时entity embedding是none，初始是要由server传输的
     def __init__(self, args, client_id, data, train_dataloader,
-                 valid_dataloader, test_dataloader, rel_embed):
+                 valid_dataloader, test_dataloader, rel_embed, LLMModel):
         self.args = args
         self.data = data
         self.train_dataloader = train_dataloader
@@ -56,7 +60,7 @@ class Client(object):
         self.score_local = []
         self.score_global = []
 
-        self.kge_model = KGEModel(args, args.model)
+        self.kge_model = KGEModel(args, args.model, LLMModel)
         self.ent_embed = None
 
     def __len__(self):
@@ -69,8 +73,11 @@ class Client(object):
         losses = []
         for i in range(self.args.local_epoch):
             for batch in self.train_dataloader:
+                # 这里实际上是dataloader的解包操作，batch是dataloader返回的一个批次而已，具体可以看dataloader的返回
+                #而dataloader列表又是dataloader.py文件中getallclients函数的返回
                 positive_sample, negative_sample, sample_idx = batch
-
+                print(positive_sample)
+                print(negative_sample)
                 positive_sample = positive_sample.to(self.args.gpu)
                 negative_sample = negative_sample.to(self.args.gpu)
 
@@ -92,6 +99,7 @@ class Client(object):
 
                 optimizer.zero_grad()
                 loss.backward()
+                #在这就更新了所有拿进去算的参数
                 optimizer.step()
 
                 losses.append(loss.item())
@@ -142,23 +150,41 @@ class FedE(object):
 
         train_dataloader_list, valid_dataloader_list, test_dataloader_list, \
             self.ent_freq_mat, rel_embed_list, nentity = get_all_clients(all_data, args)
-
+# ent_freq_mat是按用户分的训练集实体标号频率表，表长为单个用户训练集里的实体数
         self.args.nentity = nentity
 
-        # clients
+#这里也改成同步的用agrs的gpu参数
+        self.LLMName = "meta-llama/Llama-2-7b-chat-hf"
+        device_list = [3,0,1,2]
+#       print("Using gpu"," ".join([str(v) for v in device_list]))
+        device = args.gpu  #主GPU，也就是分发任务和结果回收的GPU，也是梯度传播更新的GPU
+        LLMModelTmp = LlamaForCausalLM.from_pretrained(self.LLMName)
+        LLMModel=torch.nn.DataParallel(LLMModelTmp,device_ids=device_list)
+        self.LLMModel=LLMModel.to(device)
+        self.LLMTokenizer = AutoTokenizer.from_pretrained(self.LLMName)
+
+
+        # clients 每个用户一个dataloader
         self.num_clients = len(train_dataloader_list)
         self.clients = [
             Client(args, i, all_data[i], train_dataloader_list[i], valid_dataloader_list[i],
-                   test_dataloader_list[i], rel_embed_list[i]) for i in range(self.num_clients)
+                   test_dataloader_list[i], rel_embed_list[i], LLMModel=self.LLMModel) for i in range(self.num_clients)
         ]
 
         self.server = Server(args, nentity)
 
+# test and valid先放放
         self.total_test_data_size = sum([len(client.test_dataloader.dataset) for client in self.clients])
         self.test_eval_weights = [len(client.test_dataloader.dataset) / self.total_test_data_size for client in self.clients]
 
         self.total_valid_data_size = sum([len(client.valid_dataloader.dataset) for client in self.clients])
         self.valid_eval_weights = [len(client.valid_dataloader.dataset) / self.total_valid_data_size for client in self.clients]
+
+
+
+
+
+
 
     def write_training_loss(self, loss, e):
         self.args.writer.add_scalar("training/loss", loss, e)

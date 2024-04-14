@@ -46,6 +46,7 @@ def init_logger(args):
 
 
 if __name__ == '__main__':
+    print(f"Process {os.getpid()} is the main process")
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_path', default='./data/FB15k237-Fed3.pkl', type=str, help='path for loading data')
     parser.add_argument('--name', default='fb15k237_fed3_fed', type=str, help='name of current experiment')
@@ -63,7 +64,7 @@ if __name__ == '__main__':
 
     # hyper parameter for KGE training on isolation or collection
     parser.add_argument('--one_client_idx', default=0, type=int, help='the client index on Isolation or Collection setting')
-    parser.add_argument('--max_epoch', default=1, type=int, help='the max training epoch on Isolation or Collection setting')
+    parser.add_argument('--max_epoch', default=1000, type=int, help='the max training epoch on Isolation or Collection setting')
     parser.add_argument('--log_per_epoch', default=1, type=int, help='take log per epoch on Isolation or Collection setting')
     parser.add_argument('--check_per_epoch', default=10, type=int, help='do validation per epoch on Isolation or Collection setting')
     parser.add_argument('--isolation_name_list', default=None, type=list, help='list with names for experiments on isolation training of a dataset')
@@ -97,8 +98,13 @@ if __name__ == '__main__':
     # parameter for model fusion
     parser.add_argument('--fusion_state', nargs=2, default=['fb15k237_fed3_transe_isolation', 'fb15k237_fed3_transe_fede'], help='the name of isolation and fed experiments for model fusion')
     #parser.add_argument('--usingLLM',default = True)
-    parser.add_argument('--LLMModel',default="meta-llama/Llama-2-7b-chat-hf")
-
+    #LLMModel用简名
+    parser.add_argument('--LLMModel',default="llama2")
+    # 这个用全名
+    parser.add_argument('--together_ai_model', default='mistralai/Mixtral-8x7B-Instruct-v0.1')
+    #每个prompt的三元组数和线程数
+    parser.add_argument('--num_triplets', default=3, type=int)
+    parser.add_argument('--num_threads', default=10, type=int)
     args = parser.parse_args()
 
     # ONLY for Isolation, add client index in the end of name
@@ -115,7 +121,7 @@ if __name__ == '__main__':
     # load data and get number of clients
     all_data = pickle.load(open(args.data_path, 'rb'))
     #client本地的relation、index和ori形状一样都是73492,说明用户0有73492个三元组
-    print(all_data[0]['train']['edge_index'].shape) 
+    print(all_data[0]['train']['edge_index'][0]) 
     print('\n\n')
     print(all_data[0]['train']['edge_index_ori'].shape) #这里取出来的就是index，all_data就是index
     args.num_client = len(all_data)
@@ -127,7 +133,8 @@ if __name__ == '__main__':
     logging.info(args_str)
 
     # assign cuda device
-    args.gpu = torch.device('cuda:' + args.gpu)
+    #args.gpu = torch.device('cuda:' + args.gpu)
+    args.gpu = torch.device('cpu')
     #args.gpu = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # if torch.cuda.device_count() > 1:  # 检查电脑是否有多块GPU
     #     print(f"Let's use {torch.cuda.device_count()} GPUs!")

@@ -88,13 +88,15 @@ class KGETrainer():
             self.valid_dataloader = DataLoader(
                 valid_dataset,
                 batch_size=args.test_batch_size,
-                collate_fn=TestDataset_Entire.collate_fn
+                collate_fn=TestDataset_Entire.collate_fn,
+                shuffle=False
             )
 
             self.test_dataloader = DataLoader(
                 test_dataset,
                 batch_size=args.test_batch_size,
-                collate_fn=TestDataset_Entire.collate_fn
+                collate_fn=TestDataset_Entire.collate_fn,
+                shuffle=False
             )
 
         # model 在这里尝试加入LLMModel
@@ -241,8 +243,10 @@ class KGETrainer():
                                    self.entity_embedding)# [16,14541]!形状的意义？16是测试集batch大小。我傻掉了，kgemodel里的score也是这个形状
             #我测了你这种写法，这里原来是用的else里面负样本集是none的情况，意义是获得所有实体作为tail的打分（head和relation是固定）
             #每一个三元组都有14541个打分
-            print(tail_idx.shape)
+            #print(pred.shape)
+            #print(tail_idx.shape)
             #一个16维的0到16整数的一维数组
+            print(type(pred))
             b_range = torch.arange(pred.size()[0], device=self.args.gpu)
 
             #就是取tail_idx对应实体作为tail的score，相当于正例（1个正确的，n-1个错误的）
@@ -363,6 +367,7 @@ class KGETrainer():
 
 
     def LLMevaluate(self, eval_split='valid'):
+        
         if eval_split == 'test':
             dataloader = self.test_dataloader
         elif eval_split == 'valid':
@@ -370,43 +375,105 @@ class KGETrainer():
         #自动生成的字典且元素是列表
         client_ranks = ddict(list)
         all_ranks = []
+
+
+                # 初始化空列表来存储所有批次的数据
+        all_triplets = []
+        all_labels = []
+        all_triple_idx = []
+
+        # # 设置计数器
+        # batch_count = 0
+
+        # 循环迭代数据加载器，并收集每个批次的数据
         for batch in dataloader:
+            triplets, labels, triple_idx = batch
+            all_triplets.append(triplets)
+            all_labels.append(labels)
+            all_triple_idx.append(triple_idx)
+            
+            # # 增加计数器
+            # batch_count += 1
+            
+            # # 如果计数器达到三，则退出循环
+            # if batch_count >= 1:
+            #     break
 
-            triplets, labels, triple_idx = batch #[16,3],[16,14541],[16]
-            #print(triple_idx.shape)
-            triplets, labels = triplets.to(self.args.gpu), labels.to(self.args.gpu)
-            head_idx, rel_idx, tail_idx = triplets[:, 0], triplets[:, 1], triplets[:, 2]
-            #得到score
-            pred = self.LLM_kge_model((triplets, None))
-            #pred = torch.rand((len(triple_idx), 14541),device=self.args.gpu)
-            #print(tail_idx.shape)
-            #一个16维的0到16整数的一维数组
-            b_range = torch.arange(pred.size()[0], device=self.args.gpu)
-            #就是取tail_idx对应实体作为tail的score，相当于正例（1个正确的，n-1个错误的）
-            target_pred = pred[b_range, tail_idx] #16的一维数组
-            #print(target_pred)
-            #这行代码的目的是将 pred 中对应于 labels 中 True 值的位置的数值替换为 -10000000 为了排除某些实体，不是很懂
-            pred = torch.where(labels.byte(), -torch.ones_like(pred) * 10000000, pred)
-            pred[b_range, tail_idx] = target_pred
+        # 使用 torch.cat 将列表中的张量连接起来
+        all_triplets = torch.cat(all_triplets, dim=0)
 
-            #print(torch.argsort(pred, dim=1, descending=True)[0])
-            #print(torch.argsort(torch.argsort(pred, dim=1, descending=True),dim=1, descending=False)[0])
-            #先降序再升序得到本batch中正确三元组的排名
-            ranks = 1 + torch.argsort(torch.argsort(pred, dim=1, descending=True),
-                                        dim=1, descending=False)[b_range, tail_idx]
-
-            ranks = ranks.float()
-            # 012345
-            # 528631
-            # 230415
-            # 240135 升序排列的序号 还真是，这样获得了真正的rank
+        all_labels = torch.cat(all_labels, dim=0)
+        all_triple_idx = torch.cat(all_triple_idx, dim=0)
 
 
-            for i in range(self.args.num_client):
-                client_ranks[i].extend(ranks[triple_idx == i].tolist())
+        #print(all_triplets.shape)
+        #[30000,14541]
 
-            all_ranks.extend(ranks.tolist())
+        #print(f'{self.args.LLMModel}_{self.args.num_triplets}_{self.args.num_threads}pred.txt')
 
+        #all_triplets, all_labels, all_triple_idx = batch #[16,3],[16,14541],[16]
+        print(all_triple_idx.shape)
+        all_triplets, all_labels = all_triplets.to(self.args.gpu), all_labels.to(self.args.gpu)
+        head_idx, rel_idx, tail_idx = all_triplets[:, 0], all_triplets[:, 1], all_triplets[:, 2]
+        # print("看看正确实体的位置对不对")
+        # print(tail_idx)
+        #得到score
+        pred = self.LLM_kge_model.forward((all_triplets, None))
+        # 打开文件并将pred写入文件中
+        with open(f'results/{self.args.LLMModel}_{self.args.num_triplets}_{self.args.num_threads}_pred.txt', 'w') as f:
+            for item in pred:
+                f.write(str(item) + '\n')
+        pred = torch.tensor(pred)
+
+        # print(pred.shape)
+        # print(pred.shape)
+        # print(pred.shape)
+        # print(pred.shape)
+        #pred = torch.rand((len(all_triple_idx), 14541),device=self.args.gpu)
+        #print(tail_idx.shape)
+
+        # 把这个不知所谓的部分去掉试试fede怎么样
+        #一个16维的0到16整数的一维数组
+        b_range = torch.arange(pred.size()[0], device=self.args.gpu)
+        # #就是取tail_idx对应实体作为tail的score，相当于正例（1个正确的，n-1个错误的）
+        # target_pred = pred[b_range, tail_idx] #16的一维数组
+        # #print(target_pred)
+        # #这行代码的目的是将 pred 中对应于 labels 中 True 值的位置的数值替换为 -10000000 为了排除某些实体，不是很懂
+        # pred = torch.where(all_labels.byte(), -torch.ones_like(pred) * 10000000, pred)
+        # pred[b_range, tail_idx] = target_pred
+
+        #print(torch.argsort(pred, dim=1, descending=True)[0])
+        #print(torch.argsort(torch.argsort(pred, dim=1, descending=True),dim=1, descending=False)[0])
+        #先降序再升序得到本batch中正确三元组的排名
+        ranks = 1 + torch.argsort(torch.argsort(pred, dim=1, descending=True),
+                                    dim=1, descending=False)[b_range, tail_idx]
+
+        ranks = ranks.float()
+        # print("获得正确三元组在当前一行中的打分")
+        # print(pred[b_range, tail_idx])
+
+        # 将正确三元组在当前一行中的打分写入文件中
+        with open(f'results/{self.args.LLMModel}_{self.args.num_triplets}_{self.args.num_threads}_rightscore.txt', 'w') as f:
+            for item in pred[b_range, tail_idx]:
+                f.write(str(item) + '\n')
+        # print("这是正确三元组在当前一行中的排名\n")
+        # print(ranks)
+
+        # 将正确三元组在当前一行中的打分写入文件中
+        with open(f'results/{self.args.LLMModel}_{self.args.num_triplets}_{self.args.num_threads}_rightrank.txt', 'w') as f:
+            for item in ranks:
+                f.write(str(item) + '\n')
+        # 012345
+        # 528631
+        # 230415
+        # 240135 升序排列的序号 还真是，这样获得了真正的rank
+
+
+        for i in range(self.args.num_client):
+            client_ranks[i].extend(ranks[all_triple_idx == i].tolist())
+        #把ranks所有元素添加到all_ranks末尾
+        all_ranks.extend(ranks.tolist())
+        print(all_ranks)
         for i in range(self.args.num_client):
             results = ddict(float)
             ranks = torch.tensor(client_ranks[i])

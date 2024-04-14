@@ -15,7 +15,6 @@ class KGEModel(nn.Module):
 #forward就是实体输入参数之后得到一个返回值,前向传播
     def forward(self, sample, relation_embedding, entity_embedding, neg=True):
         if not neg:#无负例情况
-            print("hello")
             head = torch.index_select(
                 entity_embedding,
                 dim=0,
@@ -43,21 +42,21 @@ class KGEModel(nn.Module):
             # print("\n")
             # print(len(tail_part[0]))
             # print("\n")
-            # print(tail_part)
+            #print(tail_part)
             batch_size = head_part.shape[0] # [512,3]
             head = torch.index_select(
                 entity_embedding,
                 dim=0,
                 index=head_part[:, 0]
             ).unsqueeze(1)  # [512,1,128]如果不squeeze的话就是[512,128]
-            #print("\n")
-            #print(head.shape)
+            # print("\n")
+            # print(head.shape)
             relation = torch.index_select(
                 relation_embedding,
                 dim=0,
                 index=head_part[:, 1]
             ).unsqueeze(1) #[512,1,128]
-
+            #print(relation.shape)
             if tail_part == None:
                 tail = entity_embedding.unsqueeze(0)
                 #注意这里的tailpart是[512,256]的形状，是512个一维数组
@@ -78,9 +77,9 @@ class KGEModel(nn.Module):
         }
 
         score = model_func[self.model_name](head, relation, tail)
-        #print(score.shape)
-        #print(head.shape)[16,1,128][16,1,128][1,14541,128]原来问题在tail上
-        #print(tail.shape)
+        # print(score.shape)
+        # print(head.shape)[16,1,128][16,1,128][1,14541,128]
+        # print(tail.shape)
         return score
     
     # 维度不同怎么做加法？不够的张量自动扩展，因此这里体现了负样本规模越多投入的负样本就越多

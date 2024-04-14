@@ -160,12 +160,7 @@ class TestDataset_Entire(Dataset):
 
 #用于isolation
 def get_task_dataset(data, args):
-    #这里用unique得到了实体数12379和关系数78
-    nentity = len(np.unique(data['train']['edge_index'].reshape(-1)))
-    nrelation = len(np.unique(data['train']['edge_type']))
-    print(nentity)
-    print("\n")
-    print(nrelation)
+
 
 #这里用到非ori的就是分给共3个用户自己的
     train_triples = np.stack((data['train']['edge_index'][0],
@@ -182,6 +177,16 @@ def get_task_dataset(data, args):
     #print(type(train_triples))#<class 'numpy.ndarray'>
     #print(train_triples)#多个三元组（内容是数字索引）
     all_triples = np.concatenate([train_triples, valid_triples, test_triples])
+
+    #这里用unique得到了实体数12379和关系数78
+    # 提取所有三元组的关系和实体数, 获取唯一的关系和它们的数量
+    nrelation = len(np.unique(all_triples[:, 1]))
+    nentity = len(np.unique(np.concatenate((all_triples[:, 0], all_triples[:, 2]))))
+    # nentity = len(np.unique(data['train']['edge_index'].reshape(-1)))
+    # nrelation = len(np.unique(data['train']['edge_type']))
+    # print(nentity)
+    # print("\n")
+    # print(nrelation)
     #这里又要跳转到新的类
     train_dataset = TrainDataset(train_triples, nentity, args.num_neg)
     valid_dataset = TestDataset(valid_triples, all_triples, nentity)
@@ -219,12 +224,26 @@ def get_task_dataset_entire(data, args):
         valid_client_idx.extend([client_idx] * d['valid']['edge_type_ori'].shape[0])
         test_client_idx.extend([client_idx] * d['test']['edge_type_ori'].shape[0])
         client_idx += 1
+        print(train_edge_type.shape)
+        print(valid_edge_type.shape)
+        print(test_edge_type.shape)
+    # print(train_edge_index.shape)
+    # print(valid_edge_index.shape)
+    # 将所有的关系类型组合成一个数组
+    all_edge_types = np.concatenate([train_edge_type, valid_edge_type, test_edge_type])
 
-    nrelation = len(np.unique(train_edge_type))# 237  200 
-    print(nrelation)
-    nentity = len(np.unique(train_edge_index.reshape(-1))) #14541  75492
+    # 计算唯一的关系类型
+    unique_edge_types = np.unique(all_edge_types)
+    all_entity_indices = np.concatenate([train_edge_index.flatten(), valid_edge_index.flatten(), test_edge_index.flatten()])
+
+    # 计算唯一的实体索引
+    unique_entity_indices = np.unique(all_entity_indices)
+
+    nentity = len(unique_entity_indices)
+    nrelation = len(unique_edge_types)
+
     print(nentity)
-
+    print(nrelation)
     ent_mask = []
     for idx, d in enumerate(data):
         client_mask_ent = np.setdiff1d(np.arange(nentity),
@@ -242,14 +261,13 @@ def get_task_dataset_entire(data, args):
                              test_edge_type,
                              test_edge_index[1])).T
     all_triples = np.concatenate([train_triples, valid_triples, test_triples])
-    
+    print(all_triples[0])
 
+#这里把test的三元组变成id搞到文件里
     list = test_triples.tolist()
     str_list = [str(element) for element in list]
     # 使用列表解析处理每个元素，去掉空格和方括号
     filtered_list = [x.replace(' ', '').replace('[', '').replace(']', '') for x in str_list]
-
-    print(filtered_list)
     # # 使用列表解析展平列表，并去掉所有方括号
     # flat_list = [item for sublist in list for item in sublist]
     # 打开一个文本文件以写入模式

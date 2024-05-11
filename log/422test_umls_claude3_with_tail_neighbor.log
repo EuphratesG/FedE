@@ -1,0 +1,54 @@
+2024-04-22 11:23:04 | {"data_path": "./data/umls-Fed3.pkl", "name": "422test_umls_claude3_with_tail_neighbor", "state_dir": "./state", "log_dir": "./log", "tb_log_dir": "./tb_log", "setting": "LLM", "mode": "test", "model": "TransE", "one_client_idx": 0, "max_epoch": 1000, "log_per_epoch": 1, "check_per_epoch": 10, "isolation_name_list": null, "batch_size": 512, "test_batch_size": 10, "num_neg": 256, "lr": 0.001, "max_round": 10000, "local_epoch": 3, "fraction": 1, "log_per_round": 1, "check_per_round": 5, "early_stop_patience": 15, "gamma": 10.0, "epsilon": 2.0, "hidden_dim": 128, "gpu": "1", "num_cpu": 10, "adversarial_temperature": 1.0, "seed": 12345, "num_client": 3, "fusion_state": ["fb15k237_fed3_transe_isolation", "fb15k237_fed3_transe_fede"], "LLMModel": "claude", "together_ai_model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "num_triplets": 1, "num_threads": 1, "metrics": "MRR"}
+2024-04-22 11:27:15 | {"data_path": "./data/umls-Fed3.pkl", "name": "422test_umls_claude3_with_tail_neighbor", "state_dir": "./state", "log_dir": "./log", "tb_log_dir": "./tb_log", "setting": "LLM", "mode": "test", "model": "TransE", "one_client_idx": 0, "max_epoch": 1000, "log_per_epoch": 1, "check_per_epoch": 10, "isolation_name_list": null, "batch_size": 512, "test_batch_size": 10, "num_neg": 256, "lr": 0.001, "max_round": 10000, "local_epoch": 3, "fraction": 1, "log_per_round": 1, "check_per_round": 5, "early_stop_patience": 15, "gamma": 10.0, "epsilon": 2.0, "hidden_dim": 128, "gpu": "1", "num_cpu": 10, "adversarial_temperature": 1.0, "seed": 12345, "num_client": 3, "fusion_state": ["fb15k237_fed3_transe_isolation", "fb15k237_fed3_transe_fede"], "LLMModel": "claude", "together_ai_model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "num_triplets": 1, "num_threads": 1, "metrics": "MRR"}
+2024-04-22 11:28:38 | {"data_path": "./data/umls-Fed3.pkl", "name": "422test_umls_claude3_with_tail_neighbor", "state_dir": "./state", "log_dir": "./log", "tb_log_dir": "./tb_log", "setting": "LLM", "mode": "test", "model": "TransE", "one_client_idx": 0, "max_epoch": 1000, "log_per_epoch": 1, "check_per_epoch": 10, "isolation_name_list": null, "batch_size": 512, "test_batch_size": 10, "num_neg": 256, "lr": 0.001, "max_round": 10000, "local_epoch": 3, "fraction": 1, "log_per_round": 1, "check_per_round": 5, "early_stop_patience": 15, "gamma": 10.0, "epsilon": 2.0, "hidden_dim": 128, "gpu": "1", "num_cpu": 10, "adversarial_temperature": 1.0, "seed": 12345, "num_client": 3, "fusion_state": ["fb15k237_fed3_transe_isolation", "fb15k237_fed3_transe_fede"], "LLMModel": "claude", "together_ai_model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "num_triplets": 1, "num_threads": 1, "metrics": "MRR"}
+2024-04-22 11:28:49 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:28:59 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:29:13 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:29:30 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:29:35 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:29:51 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:30:59 | {"data_path": "./data/umls-Fed3.pkl", "name": "422test_umls_claude3_with_tail_neighbor", "state_dir": "./state", "log_dir": "./log", "tb_log_dir": "./tb_log", "setting": "LLM", "mode": "test", "model": "TransE", "one_client_idx": 0, "max_epoch": 1000, "log_per_epoch": 1, "check_per_epoch": 10, "isolation_name_list": null, "batch_size": 512, "test_batch_size": 10, "num_neg": 256, "lr": 0.001, "max_round": 10000, "local_epoch": 3, "fraction": 1, "log_per_round": 1, "check_per_round": 5, "early_stop_patience": 15, "gamma": 10.0, "epsilon": 2.0, "hidden_dim": 128, "gpu": "1", "num_cpu": 10, "adversarial_temperature": 1.0, "seed": 12345, "num_client": 3, "fusion_state": ["fb15k237_fed3_transe_isolation", "fb15k237_fed3_transe_fede"], "LLMModel": "claude", "together_ai_model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "num_triplets": 1, "num_threads": 1, "metrics": "MRR"}
+2024-04-22 11:31:11 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:31:14 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 529 "
+2024-04-22 11:31:14 | Retrying request to /v1/messages in 0.826536 seconds
+2024-04-22 11:34:02 | {"data_path": "./data/umls-Fed3.pkl", "name": "422test_umls_claude3_with_tail_neighbor", "state_dir": "./state", "log_dir": "./log", "tb_log_dir": "./tb_log", "setting": "LLM", "mode": "test", "model": "TransE", "one_client_idx": 0, "max_epoch": 1000, "log_per_epoch": 1, "check_per_epoch": 10, "isolation_name_list": null, "batch_size": 512, "test_batch_size": 10, "num_neg": 256, "lr": 0.001, "max_round": 10000, "local_epoch": 3, "fraction": 1, "log_per_round": 1, "check_per_round": 5, "early_stop_patience": 15, "gamma": 10.0, "epsilon": 2.0, "hidden_dim": 128, "gpu": "1", "num_cpu": 10, "adversarial_temperature": 1.0, "seed": 12345, "num_client": 3, "fusion_state": ["fb15k237_fed3_transe_isolation", "fb15k237_fed3_transe_fede"], "LLMModel": "claude", "together_ai_model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "num_triplets": 1, "num_threads": 1, "metrics": "MRR"}
+2024-04-22 11:34:09 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:34:15 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:34:20 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:34:27 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:34:33 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:34:41 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:34:45 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:35:03 | {"data_path": "./data/umls-Fed3.pkl", "name": "422test_umls_claude3_with_tail_neighbor", "state_dir": "./state", "log_dir": "./log", "tb_log_dir": "./tb_log", "setting": "LLM", "mode": "test", "model": "TransE", "one_client_idx": 0, "max_epoch": 1000, "log_per_epoch": 1, "check_per_epoch": 10, "isolation_name_list": null, "batch_size": 512, "test_batch_size": 10, "num_neg": 256, "lr": 0.001, "max_round": 10000, "local_epoch": 3, "fraction": 1, "log_per_round": 1, "check_per_round": 5, "early_stop_patience": 15, "gamma": 10.0, "epsilon": 2.0, "hidden_dim": 128, "gpu": "1", "num_cpu": 10, "adversarial_temperature": 1.0, "seed": 12345, "num_client": 3, "fusion_state": ["fb15k237_fed3_transe_isolation", "fb15k237_fed3_transe_fede"], "LLMModel": "claude", "together_ai_model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "num_triplets": 1, "num_threads": 1, "metrics": "MRR"}
+2024-04-22 11:35:12 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:35:16 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:35:22 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:35:26 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:35:35 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:35:43 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:35:47 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:35:53 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:35:59 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:36:04 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:36:11 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:36:20 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:36:24 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:36:30 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:36:35 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:37:26 | {"data_path": "./data/umls-Fed3.pkl", "name": "422test_umls_claude3_with_tail_neighbor", "state_dir": "./state", "log_dir": "./log", "tb_log_dir": "./tb_log", "setting": "LLM", "mode": "test", "model": "TransE", "one_client_idx": 0, "max_epoch": 1000, "log_per_epoch": 1, "check_per_epoch": 10, "isolation_name_list": null, "batch_size": 512, "test_batch_size": 10, "num_neg": 256, "lr": 0.001, "max_round": 10000, "local_epoch": 3, "fraction": 1, "log_per_round": 1, "check_per_round": 5, "early_stop_patience": 15, "gamma": 10.0, "epsilon": 2.0, "hidden_dim": 128, "gpu": "1", "num_cpu": 10, "adversarial_temperature": 1.0, "seed": 12345, "num_client": 3, "fusion_state": ["fb15k237_fed3_transe_isolation", "fb15k237_fed3_transe_fede"], "LLMModel": "claude", "together_ai_model": "mistralai/Mixtral-8x7B-Instruct-v0.1", "num_triplets": 1, "num_threads": 3, "metrics": "MRR"}
+2024-04-22 11:37:27 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 429 Too Many Requests"
+2024-04-22 11:37:27 | Retrying request to /v1/messages in 0.992271 seconds
+2024-04-22 11:37:28 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 429 Too Many Requests"
+2024-04-22 11:37:28 | Retrying request to /v1/messages in 1.804152 seconds
+2024-04-22 11:37:30 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 429 Too Many Requests"
+2024-04-22 11:37:30 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 429 Too Many Requests"
+2024-04-22 11:37:30 | Retrying request to /v1/messages in 0.877531 seconds
+2024-04-22 11:37:32 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 429 Too Many Requests"
+2024-04-22 11:37:32 | Retrying request to /v1/messages in 1.922252 seconds
+2024-04-22 11:37:33 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2024-04-22 11:37:34 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 429 Too Many Requests"
+2024-04-22 11:37:34 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 429 Too Many Requests"
+2024-04-22 11:37:34 | Retrying request to /v1/messages in 0.785926 seconds
+2024-04-22 11:37:35 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 429 Too Many Requests"
+2024-04-22 11:37:35 | Retrying request to /v1/messages in 1.782505 seconds
+2024-04-22 11:37:35 | HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"

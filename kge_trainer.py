@@ -7,10 +7,12 @@ import pickle
 import logging
 import numpy as np
 from collections import defaultdict as ddict
-from dataloader import get_task_dataset, get_task_dataset_entire, \
-    TrainDataset, TestDataset, TestDataset_Entire
+from dataloader import get_task_dataset, get_task_dataset_entire, get_task_dataset_entire_with_hr2t,\
+    TrainDataset, TestDataset, TestDataset_Entire, TestDataset_Entire_with_hr2t
 from kge_model import KGEModel
 from LLM_kge_model import LLMKGEModel
+from sklearn.metrics import precision_recall_curve, auc
+import matplotlib.pyplot as plt
 
 #先研究这个，根据这个再弄个和isolation并列的类做比对，先别想联邦的问题
 class KGETrainer():
@@ -25,11 +27,11 @@ class KGETrainer():
             train_dataset, valid_dataset, test_dataset, nrelation, nentity = get_task_dataset(data, args)
         elif args.setting == 'LLM':
             #dataset就是正例、负例、idx
-            train_dataset, valid_dataset, test_dataset, nrelation, nentity = get_task_dataset_entire(data, args)
+            train_dataset, valid_dataset, test_dataset, nrelation, nentity, h2rt_all = get_task_dataset_entire_with_hr2t(data, args)
 
         self.nentity = nentity
         self.nrelation = nrelation
-
+        self.h2rt_all = h2rt_all
         # embedding 向量维度姑且让两者都一致吧
         embedding_range = torch.Tensor([(args.gamma + args.epsilon) / args.hidden_dim]) # tensor([0.0938])
         #print(embedding_range)
@@ -88,14 +90,14 @@ class KGETrainer():
             self.valid_dataloader = DataLoader(
                 valid_dataset,
                 batch_size=args.test_batch_size,
-                collate_fn=TestDataset_Entire.collate_fn,
+                collate_fn=TestDataset_Entire_with_hr2t.collate_fn,
                 shuffle=False
             )
 
             self.test_dataloader = DataLoader(
                 test_dataset,
                 batch_size=args.test_batch_size,
-                collate_fn=TestDataset_Entire.collate_fn,
+                collate_fn=TestDataset_Entire_with_hr2t.collate_fn,
                 shuffle=False
             )
 
@@ -246,7 +248,7 @@ class KGETrainer():
             #print(pred.shape)
             #print(tail_idx.shape)
             #一个16维的0到16整数的一维数组
-            print(type(pred))
+            #print(type(pred))
             b_range = torch.arange(pred.size()[0], device=self.args.gpu)
 
             #就是取tail_idx对应实体作为tail的score，相当于正例（1个正确的，n-1个错误的）
@@ -256,7 +258,9 @@ class KGETrainer():
             #     print(b_range)
             #     print(target_pred)
             #print(target_pred)
-            #这行代码的目的是将 pred 中对应于 labels 中 True 值的位置的数值替换为 -10000000 为了排除某些实体，不是很懂
+            #这行代码的目的是将 pred 中对应于 labels 中 True 值的位置的数值替换为 -10000000 为了排除一对多的和在训练集里出现过的实体
+            #保证true三元组的唯一性
+            print(labels.shape)
             pred = torch.where(labels.byte(), -torch.ones_like(pred) * 10000000, pred)
             pred[b_range, tail_idx] = target_pred
 
@@ -366,7 +370,7 @@ class KGETrainer():
 
 
 
-    def LLMevaluate(self, eval_split='valid'):
+    def LLMevaluate_MRR(self, eval_split='valid'):
         
         if eval_split == 'test':
             dataloader = self.test_dataloader
@@ -381,30 +385,38 @@ class KGETrainer():
         all_triplets = []
         all_labels = []
         all_triple_idx = []
-
+        all_one2n = []
+        all_neighbors = []
         # # 设置计数器
         # batch_count = 0
 
         # 循环迭代数据加载器，并收集每个批次的数据
         for batch in dataloader:
-            triplets, labels, triple_idx = batch
+            triplets, labels, triple_idx, one2n, neighbor= batch
             all_triplets.append(triplets)
             all_labels.append(labels)
             all_triple_idx.append(triple_idx)
-            
+            all_one2n.append(one2n)    
+            all_neighbors.append(neighbor)    
             # # 增加计数器
             # batch_count += 1
             
             # # 如果计数器达到三，则退出循环
             # if batch_count >= 1:
             #     break
-
+        #print(type(all_one2n[0])) #65个len10的list的集合
+        #print(type(all_one2n[0][0]))
         # 使用 torch.cat 将列表中的张量连接起来
         all_triplets = torch.cat(all_triplets, dim=0)
 
         all_labels = torch.cat(all_labels, dim=0)
         all_triple_idx = torch.cat(all_triple_idx, dim=0)
-
+        all_one2n = [item for sublist in all_one2n for item in sublist]
+        all_neighbors = [item for sublist in all_neighbors for item in sublist]
+        # 这里每行是那个测试集三元组head的所有邻居
+        print("wolaikankan")
+        print(all_neighbors[0])
+        print(len(all_neighbors))
 
         #print(all_triplets.shape)
         #[30000,14541]
@@ -412,15 +424,15 @@ class KGETrainer():
         #print(f'{self.args.LLMModel}_{self.args.num_triplets}_{self.args.num_threads}pred.txt')
 
         #all_triplets, all_labels, all_triple_idx = batch #[16,3],[16,14541],[16]
-        print(all_triple_idx.shape)
-        all_triplets, all_labels = all_triplets.to(self.args.gpu), all_labels.to(self.args.gpu)
+
+        #all_triplets, all_labels = all_triplets.to(self.args.gpu), all_labels.to(self.args.gpu)
         head_idx, rel_idx, tail_idx = all_triplets[:, 0], all_triplets[:, 1], all_triplets[:, 2]
         # print("看看正确实体的位置对不对")
         # print(tail_idx)
         #得到score
-        pred = self.LLM_kge_model.forward((all_triplets, None))
+        pred = self.LLM_kge_model.forward((all_triplets, None), all_one2n, all_neighbors, self.h2rt_all)
         # 打开文件并将pred写入文件中
-        with open(f'results/{self.args.LLMModel}_{self.args.num_triplets}_{self.args.num_threads}_pred.txt', 'w') as f:
+        with open(f'results/{self.args.name}_{self.args.num_triplets}_{self.args.num_threads}_pred.txt', 'w') as f:
             for item in pred:
                 f.write(str(item) + '\n')
         pred = torch.tensor(pred)
@@ -432,15 +444,15 @@ class KGETrainer():
         #pred = torch.rand((len(all_triple_idx), 14541),device=self.args.gpu)
         #print(tail_idx.shape)
 
-        # 把这个不知所谓的部分去掉试试fede怎么样
         #一个16维的0到16整数的一维数组
         b_range = torch.arange(pred.size()[0], device=self.args.gpu)
-        # #就是取tail_idx对应实体作为tail的score，相当于正例（1个正确的，n-1个错误的）
-        # target_pred = pred[b_range, tail_idx] #16的一维数组
-        # #print(target_pred)
-        # #这行代码的目的是将 pred 中对应于 labels 中 True 值的位置的数值替换为 -10000000 为了排除某些实体，不是很懂
-        # pred = torch.where(all_labels.byte(), -torch.ones_like(pred) * 10000000, pred)
-        # pred[b_range, tail_idx] = target_pred
+        #就是取tail_idx对应实体作为tail的score，相当于正例（1个正确的，n-1个错误的）
+        target_pred = pred[b_range, tail_idx] #16的一维数组
+        #print(target_pred)
+        #这行代码的目的是将 pred 中对应于 labels 中 True 值的位置的数值替换为 -10000000 为了排除某些实体，不是很懂
+        print(all_labels.shape)
+        pred = torch.where(all_labels.byte(), -torch.ones_like(pred) * 10000000, pred)
+        pred[b_range, tail_idx] = target_pred
 
         #print(torch.argsort(pred, dim=1, descending=True)[0])
         #print(torch.argsort(torch.argsort(pred, dim=1, descending=True),dim=1, descending=False)[0])
@@ -453,14 +465,14 @@ class KGETrainer():
         # print(pred[b_range, tail_idx])
 
         # 将正确三元组在当前一行中的打分写入文件中
-        with open(f'results/{self.args.LLMModel}_{self.args.num_triplets}_{self.args.num_threads}_rightscore.txt', 'w') as f:
+        with open(f'results/{self.args.name}_{self.args.num_triplets}_{self.args.num_threads}_rightscore.txt', 'w') as f:
             for item in pred[b_range, tail_idx]:
                 f.write(str(item) + '\n')
         # print("这是正确三元组在当前一行中的排名\n")
         # print(ranks)
 
         # 将正确三元组在当前一行中的打分写入文件中
-        with open(f'results/{self.args.LLMModel}_{self.args.num_triplets}_{self.args.num_threads}_rightrank.txt', 'w') as f:
+        with open(f'results/{self.args.name}_{self.args.num_triplets}_{self.args.num_threads}_rightrank.txt', 'w') as f:
             for item in ranks:
                 f.write(str(item) + '\n')
         # 012345
@@ -500,3 +512,82 @@ class KGETrainer():
             results['hits@5'], results['hits@10']))
 
         return results
+    
+
+
+
+    def LLMevaluate_PRAUC(self, eval_split='valid'):
+        
+        if eval_split == 'test':
+            dataloader = self.test_dataloader
+        elif eval_split == 'valid':
+            dataloader = self.valid_dataloader
+
+
+        # 初始化空列表来存储所有批次的数据
+        all_triplets = []
+        all_labels = []
+        all_triple_idx = []
+        all_one2n = []
+        all_neighbors = []
+        # # 设置计数器
+        # batch_count = 0
+
+        # 循环迭代数据加载器，并收集每个批次的数据
+        for batch in dataloader:
+            triplets, labels, triple_idx, one2n, neighbor= batch
+            all_triplets.append(triplets)
+            all_labels.append(labels)
+            all_triple_idx.append(triple_idx)
+            all_one2n.append(one2n)    
+            all_neighbors.append(neighbor)    
+            # # 增加计数器
+            # batch_count += 1
+            
+            # # 如果计数器达到三，则退出循环
+            # if batch_count >= 1:
+            #     break
+        #print(type(all_one2n[0])) #65个len10的list的集合
+        #print(type(all_one2n[0][0]))
+        # 使用 torch.cat 将列表中的张量连接起来
+        all_triplets = torch.cat(all_triplets, dim=0)
+
+        all_labels = torch.cat(all_labels, dim=0)
+        all_triple_idx = torch.cat(all_triple_idx, dim=0)
+        all_one2n = [item for sublist in all_one2n for item in sublist]
+        all_neighbors = [item for sublist in all_neighbors for item in sublist]
+        # 这里每行是那个测试集三元组head的所有邻居
+        print("wolaikankan")
+        print(all_neighbors[0])
+        print(len(all_neighbors))
+
+        #print(all_triplets.shape)
+        #[30000,14541]
+
+        #print(f'{self.args.LLMModel}_{self.args.num_triplets}_{self.args.num_threads}pred.txt')
+
+        #all_triplets, all_labels, all_triple_idx = batch #[16,3],[16,14541],[16]
+
+        #all_triplets, all_labels = all_triplets.to(self.args.gpu), all_labels.to(self.args.gpu)
+        head_idx, rel_idx, tail_idx = all_triplets[:, 0], all_triplets[:, 1], all_triplets[:, 2]
+        # print("看看正确实体的位置对不对")
+        # print(tail_idx)
+        #得到score
+        pred = self.LLM_kge_model.forward_PRAUC(all_triplets, all_one2n, all_neighbors)
+        print(type(pred))
+        print(pred)
+
+        # 提取测试集中的正确标签（在这里，由于测试集中的每个三元组都是正例，我们可以直接构建一个全为1的列表）
+        true_labels = [1] * len(all_triplets)
+
+        # 计算 precision 和 recall
+        precision, recall, _ = precision_recall_curve(true_labels, pred)
+        print(precision)
+        print(len(precision))        
+        print(recall)
+        print(len(recall))
+        # 计算 PR-AUC
+        pr_auc = auc(recall, precision)
+
+        print("PR-AUC Score:", pr_auc)
+        #return results

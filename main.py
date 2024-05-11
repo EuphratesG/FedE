@@ -70,7 +70,7 @@ if __name__ == '__main__':
     parser.add_argument('--isolation_name_list', default=None, type=list, help='list with names for experiments on isolation training of a dataset')
 # 这里修改成64了
     parser.add_argument('--batch_size', default=512, type=int, help='batch size for training KGE on FedE, Isolation or Collection,')
-    parser.add_argument('--test_batch_size', default=16, type=int, help='batch size for training KGE on FedE, Isolation or Collection,')
+    parser.add_argument('--test_batch_size', default=10, type=int, help='batch size for training KGE on FedE, Isolation or Collection,')
 # 这里修改成64了
     parser.add_argument('--num_neg', default=256, type=int, help='number of negative sample for training KGE on FedE, Isolation or Collection,')
     parser.add_argument('--lr', default=0.001, type=int, help='learning rate for training KGE on FedE, Isolation or Collection,')
@@ -105,6 +105,10 @@ if __name__ == '__main__':
     #每个prompt的三元组数和线程数
     parser.add_argument('--num_triplets', default=3, type=int)
     parser.add_argument('--num_threads', default=10, type=int)
+
+    parser.add_argument('--metrics', default='MRR')
+
+
     args = parser.parse_args()
 
     # ONLY for Isolation, add client index in the end of name
@@ -173,5 +177,9 @@ if __name__ == '__main__':
 
     elif args.setting == 'LLM':
         learner = KGETrainer(args, all_data)
-        learner.LLMevaluate(eval_split='test')
+        if args.metrics == 'MRR':
+            learner.LLMevaluate_MRR(eval_split='test')
+        elif args.metrics == 'PRAUC':
+            learner.LLMevaluate_PRAUC(eval_split='test')
+
 

@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 import concurrent.futures
 from openai import OpenAI
-
+import traceback
 
 class LLMKGEModel():#nn.Module):
     def __init__(self, args, LLM_model_name):
@@ -65,180 +65,6 @@ class LLMKGEModel():#nn.Module):
         self.relation_text = [line.strip().split(None, 1)[1] for line in lines]
 
 
-
-
-
-
-
-    def forward_PRAUC(self, sample, one2n, all_neighbors):
-        head_part = sample
-        batch_size = head_part.shape[0] # [512,3]
-        head = [self.entity_text[index[0]] for index in head_part]
-        head_description = [self.entity_description[index[0]] for index in head_part]
-        #print("\n")
-        #print(head.shape)
-        relation = [self.relation_text[index[1]] for index in head_part]
-        # print(relation[36])
-        # print(relation[36])
-        # print(relation[20])
-        tail = [self.entity_text[index[2]] for index in head_part]
-        tail_description = [self.entity_description[index[2]] for index in head_part]
-        # 使用字典将每个 set 中的索引替换为对应的值
-        one2n_text = [{self.entity_text[idx] for idx in s} for s in one2n]
-        # 使用字典将每个子列表中的索引替换为对应的值
-        all_neighbors_text = [[(self.relation_text[index1], self.entity_text[index2]) for index1, index2 in sublist] for sublist in all_neighbors]
-
-
-        model_func = {
-            'together_ai': self.together_ai_PRAUC
-        }
-
-        score = model_func[self.LLMModel](head, head_description, relation, tail, tail_description, one2n_text, all_neighbors_text)
-        
-        return score
-
-
-
-    def together_ai_PRAUC(self, head, head_description, relation, tail, tail_description, one2n_text, all_neighbors_text):
-        num_threads = self.num_threads  # 根据需要调整线程数量
-        chunk_size = len(head) // num_threads
-        remainder = len(head) % num_threads
-
-        # 提交任务给线程池
-        results = []
-        start_index = 0
-        with ThreadPoolExecutor(max_workers=num_threads) as executor:
-            for _ in range(num_threads):
-                # 计算当前线程的结束索引
-                end_index = start_index + chunk_size
-                if remainder > 0:
-                    end_index += 1
-                    remainder -= 1
-
-                # 提交任务
-                result = executor.submit(self.process_triplet_together_ai_PRAUC, head, head_description, tail, tail_description, relation, start_index, end_index, one2n_text, all_neighbors_text)
-                results.append((start_index, result))  # 保存起始索引和结果的对应关系
-
-                # 更新下一个线程的开始索引
-                start_index = end_index
-
-            executor.shutdown(wait=True)
-
-        # 根据线程启动的顺序获取结果
-        score_list = []
-        for start_index, future in sorted(results, key=lambda x: x[0]):
-            chunk_score = future.result()
-            score_list.extend(chunk_score)
-
-        return score_list
-
-
-    def process_triplet_together_ai_PRAUC(self, head, head_description, tail, tail_description, relation, start_index, end_index, one2n_text, all_neighbors_text):
-        print(f"Thread {threading.current_thread().name} is working")
-        chunk_score = []
-        TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY")
-
-        client = OpenAI(
-        api_key=TOGETHER_API_KEY,
-        base_url='https://api.together.xyz/v1',
-        )
-        for i in range(start_index, end_index):
-            row_scores = []
-            prompt_to_add = ""
-            if len(one2n_text[i]) >0:
-                for k in range(len(one2n_text[i])):
-                    #print(len(one2n_text[i]))
-                    one2n_text_list = list(one2n_text[i])
-                    prompt_to_add += f"correct triplet : Subject Entity A: {head[i]} ; \
-Object Entity B: {one2n_text_list[k]} ; \
-Predicate Relation: {relation[i]}.\n"
-            if len(all_neighbors_text[i]) > 0:
-                for k in range(len(all_neighbors_text[i])):
-                    prompt_to_add += f"correct triplet : Subject Entity A: {head[i]} ; \
-Object Entity B: {all_neighbors_text[i][k][1]} ; \
-Predicate Relation: {all_neighbors_text[i][k][0]}.\n"    
-                             
-            retry = True  # 是否重试的标志
-            while retry:  # 循环重试直到请求成功
-                try:
-                    start_time = time.time()
-
-                    # 初始化 prompt
-                    prompt = f"I would like you to handle this task for me : For the triplet I will provide shortly, estimate the likelihood that the subject entity A and the object entity B are connected by a predicate relation, forming a plausible true triplet in a knowledge graph. \
-I will also provide some correct triplets from the real knowledge graph as a judgement factor for your score. These correct triplets, sharing the same Subject Entity A as the triplet you need to score, can assist your judgment through this proximity relationship. \
-I will give you the triplet in this following format: \n\"target triplet : Subject Entity A: xxx ;\nObject Entity B: xxx ;\nPredicate Relation: xxx.\"\n\
-And the correct triplets will be provided like this: \"correct triplet : Subject Entity A: xxx ; Object Entity B: xxx ; Predicate Relation: xxx.\"\n\
-xxx will be the corresponding texts. \
-Now the triplet is as follows :\n\n"
-                    # The entities may consist of one or more words, and you should avoid confusing similar entities like \"human\" and \"human caused phenomenon or process\".\
-                    prompt += f"\"target triplet: Subject Entity A: {head[i]} ;\n\
-Object Entity B: {tail[i]} ;\n\
-Predicate Relation: {relation[i]}.\n\n"
-
-                    prompt += prompt_to_add
-                    # 添加后续指示
-                    prompt += f"\"\n\nYou should divide the scale from 0 to 1 into five parts and provide scores with fine granularity, like:\n\
-0.0000 - 0.1999: Extremely unlikely to occur, almost impossible.\n\
-0.2000 - 0.3999: Very unlikely to occur, with a small chance of happening.\n\
-0.4000 - 0.5999: Uncertain, neither likely nor unlikely.\n\
-0.6000 - 0.7999: Likely to occur, with a fair chance of happening.\n\
-0.8000 - 1.0000: Highly likely to occur, with a strong probability of happening.\n\
-Present your answer in the format: 'value of the target triplet's likelihood = 0.XXXX, Object Entity: XXXX' where 0.XXXX is a value between 0 and 1 with four decimal places, and 'Object Entity: XXXX' represents the Object Entity B provided.\n\
-Ensure that your response strictly adheres to the format provided above: 'value of the target triplet's likelihood = 0.XXXX, Object Entity: XXXX'. Only one row, no additional explanation."
-
-
-                    print(prompt)
-                    # # 打开文件并写入内容
-                    # with open("测试prompt.txt", "w") as file:
-                    #     file.write(prompt)
-                    while True:
-                        chat_completion = client.chat.completions.create(
-                        messages=[
-                            {
-                            "role": "system",
-                            "content": "You are a well-pretrained LLM, possesses a strong ability to analyze the relation between entities.",
-                            },
-                            {
-                            "role": "user",
-                            "content": prompt
-                            }
-                        ],
-                        model=self.together_ai_model
-                        )
-
-                        # parse the completion then print the whole output
-                        generatedText = chat_completion.choices[0].message.content
-                        print(generatedText)
-                        #print('-----------------------------------------------------------------------------------------')
-                        # 使用正则表达式在文本中搜索包含特定句子的部分
-                        likelihoods_str = re.findall(r'likelihood = (\d+\.\d+)', generatedText)
-                        #likelihoods_str += re.findall(r'is (\d+\.\d+)', generatedText)
-                        score = [float(likelihood) for likelihood in likelihoods_str]
-                        print(f"当前i为{i},有{len(score)}个数据")
-                        if len(score) > 1:
-                            score = [score[0]]
-                            break
-                        elif len(score) == 1:
-                            break
-                    print(score)
-                    print('\n')
-                    end_time = time.time()
-                    iteration_time = end_time - start_time
-                    print("循环执行时间:", iteration_time, "秒")
-                    row_scores.extend(score)
-                    retry = False  # 成功获取响应后退出重试循环
-                except Exception as e:#requests.exceptions.HTTPError as e:
-                    print(f"Thread {threading.current_thread().name} is working")
-                    print(e)
-                    continue
-            chunk_score.extend(row_scores)
-        print("hhhhhhhhhhhhhhhhhh")
-        print(len(chunk_score))
-        return chunk_score
-
-
-
-
 #forward就是实体输入参数之后得到一个返回值score
     def forward(self, sample, one2n, all_neighbors, h2rt_all,neg=True):
         #print(len(one2n))
@@ -278,7 +104,6 @@ Ensure that your response strictly adheres to the format provided above: 'value 
             'llama2': self.llama2,
             'together_ai': self.together_ai,
             'claude': self.claude,
-            'single_test': self.single_test
         }
 
         score = model_func[self.LLMModel](head, head_description, relation, tail, tail_description, one2n_text, all_neighbors_text,h2rt_all_text)
@@ -289,90 +114,184 @@ Ensure that your response strictly adheres to the format provided above: 'value 
 
 
 
+    def forward_PRAUC(self, sample, one2n, all_neighbors, h2rt_all,with_neighbor=False):       
+        head_part, tail_part = sample
+        batch_size = head_part.shape[0] # [512,3]
+        head = [self.entity_text[index[0]] for index in head_part]
+        head_idx = [index[0] for index in head_part]
+        head_description = [self.entity_description[index[0]] for index in head_part]
+        #print("\n")
+        #print(head.shape)
+        relation = self.relation_text
+        # print(relation[36])
+        # print(relation[36])
+        # print(relation[20])
+        #LLM是不训练的因此不要下面的了 
+        if tail_part == None:
+            tail = self.entity_text #[14541]
+            tail_description = self.entity_description
+            tail_idx = [index[2] for index in head_part]
+        # 使用字典将每个 set 中的索引替换为对应的值
+        one2n_text = [{self.entity_text[idx] for idx in s} for s in one2n]
+        # 使用字典将每个子列表中的索引替换为对应的值
+        all_neighbors_text = [[(self.relation_text[index1], self.entity_text[index2]) for index1, index2 in sublist] for sublist in all_neighbors]
+        h2rt_all_text = {key: [(self.relation_text[index1], self.entity_text[index2]) for index1, index2 in value] for key, value in h2rt_all.items()}
+        #print(all_neighbors_text)
+
+        #print(len(one2n_text)) 650个集合
+        # print(tail[57])
+        # print(tail[57])
+        # print(tail[57])
+        model_func = {
+            'together_ai': self.together_ai_PRAUC
+            #'claude': self.claude_PRAUC,
+        }
+
+        score = model_func[self.LLMModel](head,head_idx, head_description, relation, tail,tail_idx, tail_description, one2n_text, all_neighbors_text,h2rt_all_text)
+        
+        return score
 
 
 
+    def together_ai_PRAUC(self, head, head_idx, head_description, relation, tail, tail_idx, tail_description, one2n_text, all_neighbors_text, h2rt_all_text):
+        num_threads = min(self.num_threads, len(head))  # 确保线程数不超过数据长度
+        chunk_size = len(head) // num_threads
+        remainder = len(head) % num_threads
+
+        # 提交任务给线程池
+        results = []
+        start_index = 0
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            for _ in range(num_threads):
+                # 计算当前线程的结束索引
+                end_index = start_index + chunk_size
+                if remainder > 0:
+                    end_index += 1
+                    remainder -= 1
+
+                if start_index < len(head):
+                    # 提交任务
+                    result = executor.submit(self.process_triplet_together_ai_PRAUC, head, head_idx, head_description, tail, tail_idx, tail_description, relation, start_index, end_index, one2n_text, all_neighbors_text, h2rt_all_text)
+                    results.append((start_index, result))  # 保存起始索引和结果的对应关系
+
+                # 更新下一个线程的开始索引
+                start_index = end_index
+
+            executor.shutdown(wait=True)
+
+        # 根据线程启动的顺序获取结果
+        score_list = []
+        for start_index, future in sorted(results, key=lambda x: x[0]):
+            chunk_score = future.result()
+            score_list.extend(chunk_score)
+
+        return score_list
 
 
 
-    def single_test(self, head, head_description, relation, tail, tail_description, one2n_text, all_neighbors_text):
-        together.api_key = os.environ.get("TOGETHER_API_KEY") # Replace with your Together API Key
-        num_triplets_this = self.num_triplets
-        retry = True  # 是否重试的标志
-        while retry:  # 循环重试直到请求成功
-            start_time = time.time()
-            # 初始化 prompt
-            prompt = f"<s>[INST] <<SYS>>You are a well-pretrained LLM, possesses a strong ability to analyze the relation between entities.<</SYS>>\n \
-I would like you to handle this task for me : For each triplet I give you, provide me a numerical value, expressing the likelihood that subject entity A and object entity B are linked by a predicate relation to form a plausible triplet in some knowledge graphs.\
-I will give you {num_triplets_this} triplets in the following format: \"triplet 1 : Subject Entity A: xxx, Description: xxx;\nObject Entity B: xxx, Description: xxx;\nPredicate Relation: xxx.\"\nxxx will be the corresponding texts.\
-The Subject Entity A and the Predicate Relation are fixed, while the Object Entity B varies with the triplet index. Therefore, I will only provide the description of Subject Entity A in the first triplet.\n \
-The entities may consist of one or more words, and you should avoid confusing similar entities like \"human\" and \"human caused phenomenon or process\".\
-Now the triplets are as follows :\n\n"
+#这是用openAI api的版本 先改成每次一个实体同时去掉description的情况,另外加入hr2t和b的邻居
+    def process_triplet_together_ai_PRAUC(self, head,head_idx, head_description, tail,tail_idx, tail_description, relation, start_index, end_index, one2n_text, all_neighbors_text,h2rt_all_text):
+        print(f"Thread {threading.current_thread().name} is working")
+        chunk_score = []
+        TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY")
 
-            # 循环生成三元组
-            for k in range(num_triplets_this):
-                if k==0 :
-                    prompt += f"triplet {k+1} : Subject Entity A: {tail[57]}, Description: {tail_description[57]}\n\
-Object Entity B: {tail[46]}, Description: {tail_description[46]}\n\
-Predicate Relation: {relation[1]}.\n\n"
-                else :
-                    prompt += f"triplet {k+1} : Subject Entity A: {tail[57]}, Description: Refer to triplet 1\n\
-Object Entity B: {tail[46+k]}, Description: {tail_description[46+k]}\n\
-Predicate Relation: {relation[1]}.\n\n"
+        client = OpenAI(
+        api_key=TOGETHER_API_KEY,
+        base_url='https://api.together.xyz/v1',
+        )
 
-            #这里别漏了
-            #j+=num_triplets
-            # 添加后续指示
-            prompt += f"You should divide the scale from 0 to 1 into five parts and provide scores with fine granularity, like:\n\
-0.0000 - 0.1999: Extremely unlikely to occur, almost impossible.\n \
-0.2000 - 0.3999: Very unlikely to occur, with a small chance of happening.\n \
-0.4000 - 0.5999: Uncertain, neither likely nor unlikely.\n \
-0.6000 - 0.7999: Likely to occur, with a fair chance of happening.\n \
-0.8000 - 1.0000: Highly likely to occur, with a strong probability of happening.\n \
-Emphasizing, the factor you refer to must be the predicate relation I provided, and the relation between the two entities is an unidirectional predicate, with subject entity A pointing to object entity B.\
-Present your answer using this format: \"value of the 1st(2nd and so on, until reach {num_triplets_this}) triplet's likelihood = 0.XXXX, Object Entity:XXXX \" where 0.XXXX is a value between 0 and 1 with four decimal places, and Object Entity :XXXX means the Object Entity B I give you.\n\
-Ensure that your response for each corresponding triplet strictly adheres to the format provided above, and also ensure that the number of answers matches the quantity I requested, one answer per row. No extra explanation about your answers. [/INST]"
-
-
-
-            print(prompt)
-            # # 打开文件并写入内容
-            # with open("测试prompt.txt", "w") as file:
-            #     file.write(prompt)
-            while True:
-                output = together.Complete.create(
-                    prompt=prompt,
-                    model=self.together_ai_model,
-                    max_tokens=4096,
-                    temperature=0.8,
-                )
-
-                # parse the completion then print the whole output
-                generatedText = output['output']['choices'][0]['text']
-                print(generatedText)
-                #print('-----------------------------------------------------------------------------------------')
-                # 使用正则表达式在文本中搜索包含特定句子的部分
-                likelihoods_str = re.findall(r'likelihood = (\d+\.\d+)', generatedText)
-                score = [float(likelihood) for likelihood in likelihoods_str]
-                #print(f"当前i为{i},j为{j},有{len(score)}个数据")
-                if len(score) == num_triplets_this:
-                    break
-            print(score)
-            print('\n')
-            end_time = time.time()
-            iteration_time = end_time - start_time
-            print("循环执行时间:", iteration_time, "秒")
-            retry = False  # 成功获取响应后退出重试循环
-        # except Exception as e:#requests.exceptions.HTTPError as e:
-        #     print(f"Thread {threading.current_thread().name} is working")
-        #     print(e)
-        #     continue
+        for i in range(start_index, end_index):
+            row_scores = []
+            prompt_to_add = ""
+            if len(all_neighbors_text[i]) > 0:
+                for k in range(len(all_neighbors_text[i])):
+                    prompt_to_add += f"correct triplet : Subject Entity A: {head[i]} ; \
+Object Entity B: {all_neighbors_text[i][k][1]} ; \
+Predicate Relation: {all_neighbors_text[i][k][0]}.\n"    
+            if int(tail_idx[i]) in h2rt_all_text :
+                #print(len(h2rt_all_text[j]))
+                for k in range(len(h2rt_all_text[int(tail_idx[i])])):
+                    prompt_to_add += f"correct triplet : Subject Entity A: {tail[int(tail_idx[i])]} ; \
+Object Entity B: {h2rt_all_text[int(tail_idx[i])][k][1]} ; \
+Predicate Relation: {h2rt_all_text[int(tail_idx[i])][k][0]}.\n"
+                    
+            for j in range(0, len(relation)):
+                retry = True  # 是否重试的标志
+                while retry:  # 循环重试直到请求成功
+                    try:
+                        start_time = time.time()
+                        # 初始化 prompt
+                        prompt = f"I would like you to handle this task for me : For the triplet I will provide shortly, estimate the likelihood that the subject entity A and the object entity B are connected by a predicate relation, forming a plausible true triplet in a knowledge graph. \
+I will also provide some correct triplets from the real knowledge graph as a judgement factor for your score. These correct triplets, sharing the same entity partly as the triplet you need to score, can assist your judgment through this proximity relationship. \
+I will give you the triplet in this following format: \n\"target triplet : Subject Entity A: xxx ;\nObject Entity B: xxx ;\nPredicate Relation: xxx.\"\n\
+And the correct triplets will be provided like this: \"correct triplet : Subject Entity A: xxx ; Object Entity B: xxx ; Predicate Relation: xxx.\"\n\
+xxx will be the corresponding texts. \
+Now the triplet is as follows :\n\n"
+                        # The entities may consist of one or more words, and you should avoid confusing similar entities like \"human\" and \"human caused phenomenon or process\".\
+                        prompt += f"\"target triplet: Subject Entity A: {head[i]} ;\n\
+Object Entity B: {tail[int(tail_idx[i])]} ;\n\
+Predicate Relation: {relation[j]}.\n\n"
+                        prompt += prompt_to_add
+                        # 添加后续指示
+                        prompt += f"\"\n\nYou should divide the scale from 0 to 1 into five parts and provide scores with fine granularity, like:\n\
+0.0000 - 0.1999: Extremely unlikely to occur, almost impossible.\n\
+0.2000 - 0.3999: Very unlikely to occur, with a small chance of happening.\n\
+0.4000 - 0.5999: Uncertain, neither likely nor unlikely.\n\
+0.6000 - 0.7999: Likely to occur, with a fair chance of happening.\n\
+0.8000 - 1.0000: Highly likely to occur, with a strong probability of happening.\n\
+Present your answer in the format: 'value of the target triplet's likelihood = 0.XXXX, Predicate Relation: XXXX' where 0.XXXX is a value between 0 and 1 with four decimal places, and 'Predicate Relation: XXXX' represents the Predicate Relation provided.\n\
+Ensure that your response strictly adheres to the format provided above: 'value of the target triplet's likelihood = 0.XXXX, Object Entity: XXXX'. Only one row, no additional explanation."
 
 
+                        print(prompt)
+                        # # 打开文件并写入内容
+                        # with open("测试prompt.txt", "w") as file:
+                        #     file.write(prompt)
+                        while True:
+                            chat_completion = client.chat.completions.create(
+                            messages=[
+                                {
+                                "role": "system",
+                                "content": "You are a well-pretrained LLM, possesses a strong ability to analyze the relation between entities.",
+                                },
+                                {
+                                "role": "user",
+                                "content": prompt
+                                }
+                            ],
+                            model=self.together_ai_model
+                            )
 
+                            # parse the completion then print the whole output
+                            generatedText = chat_completion.choices[0].message.content
+                            print(generatedText)
+                            #print('-----------------------------------------------------------------------------------------')
+                            # 使用正则表达式在文本中搜索包含特定句子的部分
+                            likelihoods_str = re.findall(r'likelihood = (\d+\.\d+)', generatedText)
+                            score = [float(likelihood) for likelihood in likelihoods_str]
+                            print(f"当前i为{i}, j为{j}, 有{len(score)}个数据")
+                            if len(score) > 1:
+                                score = [score[0]]
+                                break
+                            elif len(score) == 1:
+                                break
+                        print(score)
+                        print('\n')
+                        end_time = time.time()
+                        iteration_time = end_time - start_time
+                        print("循环执行时间:", iteration_time, "秒")
+                        row_scores.extend(score)
+                        retry = False  # 成功获取响应后退出重试循环
+                    except Exception as e:#requests.exceptions.HTTPError as e:
+                        print(f"Thread {threading.current_thread().name} is working")
+                        print(e)
+                        traceback.print_exc()
+                        continue
+            chunk_score.append(row_scores)
+        print("hhhhhhhhhhhhhhhhhh")
+        print(len(chunk_score))
 
-
-
+        return chunk_score
 
 
     def together_ai(self, head, head_description, relation, tail, tail_description, one2n_text, all_neighbors_text,h2rt_all_text):
@@ -714,7 +633,6 @@ Predicate Relation: {h2rt_all_text[j][k][0]}.\n"
                 while retry:  # 循环重试直到请求成功
                     try:
                         start_time = time.time()
-
                         # 初始化 prompt
                         prompt = f"I would like you to handle this task for me : For the triplet I will provide shortly, estimate the likelihood that the subject entity A and the object entity B are connected by a predicate relation, forming a plausible true triplet in a knowledge graph. \
 I will also provide some correct triplets from the real knowledge graph as a judgement factor for your score. These correct triplets, sharing the same entity partly as the triplet you need to score, can assist your judgment through this proximity relationship. \

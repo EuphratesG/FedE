@@ -1,33 +1,67 @@
-import torch
-import torch.nn as nn
+from neo4j import GraphDatabase
 
-class EREmbedding(nn.Module):
-    def __init__(self, entity_embedding_tensor, relation_embedding_tensor):
-        super(EREmbedding, self).__init__()
-        self.entity_embedding = nn.Parameter(entity_embedding_tensor)
-        self.relation_embedding = nn.Parameter(relation_embedding_tensor)
+# Neo4j数据库连接参数
+uri = "bolt://localhost:7687"
+username = "neo4j"
+password = "neo4j"  # 请替换为你的实际密码
+triples = [
+    (49, 28, 50),
+    (81, 5, 21),
+    (115, 43, 107),
+    (89, 27, 50),
+    (103, 26, 81),
+    (22, 13, 128),
+    (42, 19, 116),
+    (111, 28, 63),
+    (20, 40, 81)
+]
 
-    def forward(self, entity_ids, relation_ids):
-        entity_embeddings = torch.index_select(self.entity_embedding, dim=0, index=entity_ids)
-        relation_embeddings = torch.index_select(self.relation_embedding, dim=0, index=relation_ids)
-        return entity_embeddings, relation_embeddings
+entity_names = {
+    49: "EntityA",
+    28: "EntityB",
+    50: "EntityC",
+    81: "EntityD",
+    5: "EntityE",
+    21: "EntityF",
+    115: "EntityG",
+    43: "EntityH",
+    107: "EntityI",
+    89: "EntityJ",
+    27: "EntityK",
+    103: "EntityL",
+    26: "EntityM",
+    22: "EntityN",
+    13: "EntityO",
+    128: "EntityP",
+    42: "EntityQ",
+    19: "EntityR",
+    116: "EntityS",
+    111: "EntityT",
+    63: "EntityU",
+    20: "EntityV",
+    40: "EntityW"
+}
 
-gpu_num = "6"
-gpu = torch.device('cuda:' + gpu_num)
-# 从文件加载张量
-entity_embedding_tensor = torch.load('/home/yvhe/510entity_embeddings.pt')
+# 连接到Neo4j数据库
+driver = GraphDatabase.driver(uri, auth=(username, password))
 
+def create_entity(tx, entity_id, entity_name):
+    tx.run("MERGE (e:Entity {id: $id, name: $name})", id=entity_id, name=entity_name)
 
-relation_embedding_tensor = torch.load('/home/yvhe/510relation_embeddings.pt')
+def create_relationship(tx, start_id, relationship_id, end_id):
+    tx.run("""
+    MATCH (a:Entity {id: $start_id})
+    MATCH (b:Entity {id: $end_id})
+    MERGE (a)-[:RELATED_TO {id: $rel_id}]->(b)
+    """, start_id=start_id, end_id=end_id, rel_id=relationship_id)
 
-# 创建 EREmbedding 实例时传递实体嵌入张量和关系嵌入张量
-entity_embedding_model = EREmbedding(entity_embedding_tensor, relation_embedding_tensor)
+# 创建实体和关系
+with driver.session() as session:
+    for entity_id, entity_name in entity_names.items():
+        session.write_transaction(create_entity, entity_id, entity_name)
+    
+    for start, rel, end in triples:
+        session.write_transaction(create_relationship, start, rel, end)
 
-# 示例输入，要获取第1个实体和第1个关系的嵌入
-entity_ids = torch.tensor([0])  # 实体索引
-relation_ids = torch.tensor([0])  # 关系索引
-
-# 使用模型进行前向传播
-entity_embeddings, relation_embeddings = entity_embedding_model(entity_ids, relation_ids)
-print("Entity Embeddings:", entity_embeddings.shape)
-print("Relation Embeddings:", relation_embeddings.shape)
+# 关闭数据库连接
+driver.close()

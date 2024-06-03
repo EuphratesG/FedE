@@ -161,24 +161,29 @@ class TestDataset_Entire(Dataset):
 
 class TestDataset_Entire_with_hr2t(Dataset):
     #    test_dataset = TestDataset_Entire(test_triples, all_triples, nentity, test_client_idx, ent_mask)
-    def __init__(self, triples, all_true_triples, nentity, triple_client_idx=None, ent_mask=None):
+    def __init__(self, triples, all_true_triples, nrelation, triple_client_idx=None, ent_mask=None):
         self.len = len(triples)
         self.triple_set = all_true_triples
         self.triples = triples
-        self.nentity = nentity
+        self.nrelation = nrelation
 
         self.triple_client_idx = torch.tensor(triple_client_idx, dtype=torch.int)
         self.ent_mask = ent_mask
 
         self.hr2t_all = ddict(set)
         for h, r, t in all_true_triples:
-            self.hr2t_all[(h, r)].add(t)          
+            self.hr2t_all[(h, r)].add(t)     
+
         # 创建一个 defaultdict，值的默认类型是列表
         self.h2rt_all = ddict(list)
-
         # 遍历 all_true_triples 列表，并将 [r, t] 列表添加到 hr2rt_all 字典中对应的列表中
         for h, r, t in all_true_triples:
             self.h2rt_all[h].append([r, t])
+
+
+        self.ht2r_all = ddict(set)
+        for h, r, t in all_true_triples:
+            self.ht2r_all[(h,t)].add(r) 
 
 
     def __len__(self):
@@ -206,9 +211,11 @@ class TestDataset_Entire_with_hr2t(Dataset):
         neighbor.remove([relation,tail])
         #这里label是个set，对应该batch里这个三元组的tail实体序号（因为可能有多个tail）
         #print(label)
-        trp_label = self.get_label(one2n, triple_idx) #[14541]
+        ht2r = self.ht2r_all[(head,tail)]
+        ht2r.remove(relation)
+        trp_label = self.get_label(ht2r, triple_idx) #[14541]
         triple = torch.LongTensor((head, relation, tail))
-        count_ones = torch.sum(trp_label == 1).item()
+        #count_ones = torch.sum(trp_label == 1).item()
 
         #print("该三元组一对多的个数:", count_ones)
         #trp_label就是没有在训练集里出现的实体的index加上该三元组上面的label
@@ -216,7 +223,7 @@ class TestDataset_Entire_with_hr2t(Dataset):
 
     def get_label(self, label, triple_idx=None):
         # 14541的0数组
-        y = np.zeros([self.nentity], dtype=np.float32)
+        y = np.zeros([self.nrelation], dtype=np.float32)
         # if triple_idx is not None and type(self.ent_mask) == list:
         #     y[self.ent_mask[triple_idx]] = 1.0
         for e2 in label:
@@ -348,7 +355,17 @@ def get_task_dataset_entire(data, args):
     return train_dataset, valid_dataset, test_dataset, nrelation, nentity
 
 
-
+# 计算各客户端之间的共有实体
+def find_common_entities(client_entities):
+    common_entities = {}
+    clients = list(client_entities.keys())
+    for i in range(len(clients)):
+        for j in range(i + 1, len(clients)):
+            client1 = clients[i]
+            client2 = clients[j]
+            common = client_entities[client1].intersection(client_entities[client2])
+            common_entities[(client1, client2)] = common
+    return common_entities
 
 #用于llm
 def get_task_dataset_entire_with_hr2t(data, args):
@@ -361,10 +378,19 @@ def get_task_dataset_entire_with_hr2t(data, args):
     test_edge_index = np.array([[], []], dtype=np.int32)
     test_edge_type = np.array([], dtype=np.int32)
 
+    # 初始化client-specific的字典
+    train_client_data = {}
+    valid_client_data = {}
+    test_client_data = {}
+    all_client_data = {}
+
     train_client_idx = []
     valid_client_idx = []
     test_client_idx = []
     client_idx = 0
+
+    # 初始化实体集合字典
+    client_entities = {}
     for d in data:
         train_edge_index = np.concatenate([train_edge_index, d['train']['edge_index_ori']], axis=-1)
         valid_edge_index = np.concatenate([valid_edge_index, d['valid']['edge_index_ori']], axis=-1)
@@ -374,12 +400,54 @@ def get_task_dataset_entire_with_hr2t(data, args):
         valid_edge_type = np.concatenate([valid_edge_type, d['valid']['edge_type_ori']], axis=-1)
         test_edge_type = np.concatenate([test_edge_type, d['test']['edge_type_ori']], axis=-1)
 
+
+
+        # 提取实体集合
+        train_entities = np.unique(d['train']['edge_index_ori'])
+        valid_entities = np.unique(d['valid']['edge_index_ori'])
+        test_entities = np.unique(d['test']['edge_index_ori'])
+
+        all_entities = np.unique(np.concatenate([train_entities, valid_entities, test_entities]))
+        client_entities[client_idx] = set(all_entities)
+
+        # 将每个客户端的数据存储在字典中，并转换为三元组
+        train_client_data[client_idx] = np.stack((d['train']['edge_index_ori'][0],
+                                                d['train']['edge_type_ori'],
+                                                d['train']['edge_index_ori'][1])).T
+        valid_client_data[client_idx] = np.stack((d['valid']['edge_index_ori'][0],
+                                                d['valid']['edge_type_ori'],
+                                                d['valid']['edge_index_ori'][1])).T
+        test_client_data[client_idx] = np.stack((d['test']['edge_index_ori'][0],
+                                                d['test']['edge_type_ori'],
+                                                d['test']['edge_index_ori'][1])).T
+
+        all_client_data[client_idx] = np.concatenate([
+            np.stack((d['train']['edge_index_ori'][0],
+                    d['train']['edge_type_ori'],
+                    d['train']['edge_index_ori'][1])).T,
+            np.stack((d['valid']['edge_index_ori'][0],
+                    d['valid']['edge_type_ori'],
+                    d['valid']['edge_index_ori'][1])).T,
+            np.stack((d['test']['edge_index_ori'][0],
+                    d['test']['edge_type_ori'],
+                    d['test']['edge_index_ori'][1])).T
+        ])
+        
         train_client_idx.extend([client_idx] * d['train']['edge_type_ori'].shape[0])
         #73492个0，后面1，后面2，的一维数组单纯的标号而已
         #print(train_client_idx)
         valid_client_idx.extend([client_idx] * d['valid']['edge_type_ori'].shape[0])
         test_client_idx.extend([client_idx] * d['test']['edge_type_ori'].shape[0])
         client_idx += 1
+
+
+
+    common_entities = find_common_entities(client_entities)
+
+    # 打印共有实体
+    for (client1, client2), entities in common_entities.items():
+        print(f"Clients {client1} and {client2} have {len(entities)} common entities: {entities}")
+
 
     # print(train_edge_index.shape)
     # print(valid_edge_index.shape)
@@ -416,19 +484,7 @@ def get_task_dataset_entire_with_hr2t(data, args):
     print("测试集形状")
     print(test_triples.shape)
     print(len(np.unique(np.concatenate([[row[0] for row in test_triples], [row[2] for row in test_triples]]))))
-# #这里把test的三元组变成id搞到文件里
-#     list = test_triples.tolist()
-#     str_list = [str(element) for element in list]
-#     # 使用列表解析处理每个元素，去掉空格和方括号
-#     filtered_list = [x.replace(' ', '').replace('[', '').replace(']', '') for x in str_list]
-#     # # 使用列表解析展平列表，并去掉所有方括号
-#     # flat_list = [item for sublist in list for item in sublist]
-#     # 打开一个文本文件以写入模式
-#     with open("FB12k237/triplesid.txt", "w") as file:
-#         # 遍历每个元素
-#         for item in filtered_list:
-#             # 将逗号替换为空格，并写入到文件中
-#             file.write(item.replace(',', ' ') + '\n')
+
 
 
 
@@ -439,10 +495,10 @@ def get_task_dataset_entire_with_hr2t(data, args):
     for h, r, t in all_triples:
         h2rt_all[h].append([r, t])
     train_dataset = TrainDataset(train_triples, nentity, args.num_neg)
-    valid_dataset = TestDataset_Entire_with_hr2t(valid_triples, all_triples, nentity, valid_client_idx, ent_mask)
-    test_dataset = TestDataset_Entire_with_hr2t(test_triples, all_triples, nentity, test_client_idx, ent_mask)
+    valid_dataset = TestDataset_Entire_with_hr2t(valid_triples, all_triples, nrelation, valid_client_idx, ent_mask)
+    test_dataset = TestDataset_Entire_with_hr2t(test_triples, all_triples, nrelation, test_client_idx, ent_mask)
 
-    return train_dataset, valid_dataset, test_dataset, nrelation, nentity, h2rt_all
+    return train_dataset, valid_dataset, test_dataset, nrelation, nentity, h2rt_all, all_client_data
 
 
 

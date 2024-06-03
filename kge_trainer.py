@@ -27,8 +27,9 @@ class KGETrainer():
             train_dataset, valid_dataset, test_dataset, nrelation, nentity = get_task_dataset(data, args)
         elif args.setting == 'LLM':
             #dataset就是正例、负例、idx
-            train_dataset, valid_dataset, test_dataset, nrelation, nentity, h2rt_all = get_task_dataset_entire_with_hr2t(data, args)
+            train_dataset, valid_dataset, test_dataset, nrelation, nentity, h2rt_all , all_client_data= get_task_dataset_entire_with_hr2t(data, args)
 
+        self.all_client_data = all_client_data
         self.nentity = nentity
         self.nrelation = nrelation
         self.h2rt_all = h2rt_all
@@ -411,6 +412,13 @@ class KGETrainer():
 
         all_labels = torch.cat(all_labels, dim=0)
         all_triple_idx = torch.cat(all_triple_idx, dim=0)
+        print(all_triple_idx)
+        print(len(all_triple_idx))       
+        # print(len(all_triplets))
+        # print(len(all_labels))
+        # print(len(all_triple_idx))
+        # print(len(all_one2n))
+        # print(len(all_neighbors))
         all_one2n = [item for sublist in all_one2n for item in sublist]
         all_neighbors = [item for sublist in all_neighbors for item in sublist]
         # 这里每行是那个测试集三元组head的所有邻居
@@ -516,13 +524,21 @@ class KGETrainer():
 
 
 
+
+
     def LLMevaluate_PRAUC(self, eval_split='valid'):
         
+
+        with_interaction = True
+
+
         if eval_split == 'test':
             dataloader = self.test_dataloader
         elif eval_split == 'valid':
             dataloader = self.valid_dataloader
-
+        #自动生成的字典且元素是列表
+        client_ranks = ddict(list)
+        all_ranks = []
 
         # 初始化空列表来存储所有批次的数据
         all_triplets = []
@@ -554,40 +570,96 @@ class KGETrainer():
 
         all_labels = torch.cat(all_labels, dim=0)
         all_triple_idx = torch.cat(all_triple_idx, dim=0)
+
         all_one2n = [item for sublist in all_one2n for item in sublist]
         all_neighbors = [item for sublist in all_neighbors for item in sublist]
-        # 这里每行是那个测试集三元组head的所有邻居
-        print("wolaikankan")
-        print(all_neighbors[0])
-        print(len(all_neighbors))
 
-        #print(all_triplets.shape)
-        #[30000,14541]
-
-        #print(f'{self.args.LLMModel}_{self.args.num_triplets}_{self.args.num_threads}pred.txt')
-
-        #all_triplets, all_labels, all_triple_idx = batch #[16,3],[16,14541],[16]
 
         #all_triplets, all_labels = all_triplets.to(self.args.gpu), all_labels.to(self.args.gpu)
         head_idx, rel_idx, tail_idx = all_triplets[:, 0], all_triplets[:, 1], all_triplets[:, 2]
-        # print("看看正确实体的位置对不对")
-        # print(tail_idx)
-        #得到score
-        pred = self.LLM_kge_model.forward_PRAUC(all_triplets, all_one2n, all_neighbors)
-        print(type(pred))
-        print(pred)
+        # 将所有的pred分开计算
 
-        # 提取测试集中的正确标签（在这里，由于测试集中的每个三元组都是正例，我们可以直接构建一个全为1的列表）
-        true_labels = [1] * len(all_triplets)
+        for client_idx in range(3):#self.args.num_client):
+            client_mask = (all_triple_idx == client_idx)
+            if client_mask.sum() == 0:
+                continue
 
-        # 计算 precision 和 recall
-        precision, recall, _ = precision_recall_curve(true_labels, pred)
-        print(precision)
-        print(len(precision))        
-        print(recall)
-        print(len(recall))
-        # 计算 PR-AUC
-        pr_auc = auc(recall, precision)
+            client_triplets = all_triplets[client_mask]
+            client_labels = all_labels[client_mask]
+            client_one2n = [all_one2n[i] for i in range(len(all_one2n)) if client_mask[i]]
+            client_neighbors = [all_neighbors[i] for i in range(len(all_neighbors)) if client_mask[i]]
+            client_rel_idx = rel_idx[client_mask]
+            client_h2rt = ddict(list)
+            for h, r, t in self.all_client_data[client_idx]:
+                client_h2rt[h].append([r, t])
+            # print(len(self.all_client_data))
+            # print(len(client_triplets))
+            # print(len(client_labels))
+            # print(len(client_one2n))
+            # print(len(client_neighbors))
+            # print(len(client_tail_idx))
+            # print(len(client_h2rt))
+            # 得到score
+            if not with_interaction:
+                pred = self.LLM_kge_model.forward_PRAUC((client_triplets, None), client_one2n, client_neighbors, client_h2rt)
+                pred = torch.tensor(pred, device=self.args.gpu)
 
-        print("PR-AUC Score:", pr_auc)
-        #return results
+                b_range = torch.arange(pred.size()[0], device=self.args.gpu)
+                target_pred = pred[b_range, client_rel_idx]
+                pred = torch.where(client_labels.byte(), -torch.ones_like(pred) * 10000000, pred)
+                pred[b_range, client_rel_idx] = target_pred
+                # 保存张量到文件
+                torch.save(pred, f'{self.args.name}_{self.args.num_triplets}_{self.args.num_threads}_client{client_idx}.pt')
+                print("看一下pred长度", pred.size())
+                ranks = 1 + torch.argsort(torch.argsort(pred, dim=1, descending=True),
+                                        dim=1, descending=False)[b_range, client_rel_idx]
+                print("看一眼ranks形状",len(ranks))
+                ranks = ranks.float()
+            elif with_interaction:
+                pred = self.LLM_kge_model.forward_PRAUC((client_triplets, None), all_one2n, all_neighbors, self.h2rt_all)
+                pred = torch.tensor(pred, device=self.args.gpu)
+
+                b_range = torch.arange(pred.size()[0], device=self.args.gpu)
+                target_pred = pred[b_range, client_rel_idx]
+                pred = torch.where(client_labels.byte(), -torch.ones_like(pred) * 10000000, pred)
+                pred[b_range, client_rel_idx] = target_pred
+                # 保存张量到文件
+                torch.save(pred, f'{self.args.name}_{self.args.num_triplets}_{self.args.num_threads}_client{client_idx}.pt')
+                print("看一下pred长度", pred.size())
+                ranks = 1 + torch.argsort(torch.argsort(pred, dim=1, descending=True),
+                                        dim=1, descending=False)[b_range, client_rel_idx]
+                print("看一眼ranks形状",len(ranks))
+                ranks = ranks.float()                
+            client_ranks[client_idx].extend(ranks.tolist())
+
+
+        for i in range(self.args.num_client):
+            if len(client_ranks[i]) == 0:
+                continue
+            results = ddict(float)
+            ranks = torch.tensor(client_ranks[i])
+            count = torch.numel(ranks)
+            results['count'] = count
+            results['mr'] = torch.sum(ranks).item() / count
+            results['mrr'] = torch.sum(1.0 / ranks).item() / count
+            for k in [1, 5, 10]:
+                results['hits@{}'.format(k)] = torch.numel(ranks[ranks <= k]) / count
+            logging.info('Client {}: mrr: {:.4f}, hits@1: {:.4f}, hits@5: {:.4f}, hits@10: {:.4f}'.format(
+                i, results['mrr'], results['hits@1'],
+                results['hits@5'], results['hits@10']))
+
+        # 计算所有客户端的总体结果
+        all_ranks = [rank for client in client_ranks.values() for rank in client]
+        results = ddict(float)
+        ranks = torch.tensor(all_ranks)
+        count = torch.numel(ranks)
+        results['count'] = count
+        results['mr'] = torch.sum(ranks).item() / count
+        results['mrr'] = torch.sum(1.0 / ranks).item() / count
+        for k in [1, 5, 10]:
+            results['hits@{}'.format(k)] = torch.numel(ranks[ranks <= k]) / count
+        logging.info('Overall: mrr: {:.4f}, hits@1: {:.4f}, hits@5: {:.4f}, hits@10: {:.4f}'.format(
+            results['mrr'], results['hits@1'],
+            results['hits@5'], results['hits@10']))
+
+        return results

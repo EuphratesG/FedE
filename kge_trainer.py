@@ -7,14 +7,17 @@ import pickle
 import logging
 import numpy as np
 from collections import defaultdict as ddict
-from dataloader import get_task_dataset, get_task_dataset_entire, get_task_dataset_entire_with_hr2t,\
-    TrainDataset, TestDataset, TestDataset_Entire, TestDataset_Entire_with_hr2t
+from dataloader import get_task_dataset, get_task_dataset_entire, get_task_dataset_entire_llm,\
+    TrainDataset, TestDataset, TestDataset_Entire, TestDataset_Entire_llm
 from kge_model import KGEModel
 from LLM_kge_model import LLMKGEModel
 from sklearn.metrics import precision_recall_curve, auc
 import matplotlib.pyplot as plt
+from py2neo import Graph, Node, Relationship
 
-#先研究这个，根据这个再弄个和isolation并列的类做比对，先别想联邦的问题
+
+
+#涉及fede的collection、isolation
 class KGETrainer():
     def __init__(self, args, data):
         self.args = args
@@ -27,15 +30,18 @@ class KGETrainer():
             train_dataset, valid_dataset, test_dataset, nrelation, nentity = get_task_dataset(data, args)
         elif args.setting == 'LLM':
             #dataset就是正例、负例、idx
-            train_dataset, valid_dataset, test_dataset, nrelation, nentity, h2rt_all , all_client_data= get_task_dataset_entire_with_hr2t(data, args)
+            train_dataset, valid_dataset, test_dataset, nrelation, nentity, h2rt_all , all_client_data= get_task_dataset_entire_llm(data, args)
 
         self.all_client_data = all_client_data
         self.nentity = nentity
         self.nrelation = nrelation
+
+        #邻居相关
         self.h2rt_all = h2rt_all
-        # embedding 向量维度姑且让两者都一致吧
+
+
+        # embedding 向量维度
         embedding_range = torch.Tensor([(args.gamma + args.epsilon) / args.hidden_dim]) # tensor([0.0938])
-        #print(embedding_range)
         if args.model in ['RotatE', 'ComplEx']:
             self.entity_embedding = torch.zeros(self.nentity, args.hidden_dim * 2).to(args.gpu).requires_grad_()
         else:
@@ -91,23 +97,20 @@ class KGETrainer():
             self.valid_dataloader = DataLoader(
                 valid_dataset,
                 batch_size=args.test_batch_size,
-                collate_fn=TestDataset_Entire_with_hr2t.collate_fn,
+                collate_fn=TestDataset_Entire_llm.collate_fn,
                 shuffle=False
             )
 
             self.test_dataloader = DataLoader(
                 test_dataset,
                 batch_size=args.test_batch_size,
-                collate_fn=TestDataset_Entire_with_hr2t.collate_fn,
+                collate_fn=TestDataset_Entire_llm.collate_fn,
                 shuffle=False
             )
 
-        # model 在这里尝试加入LLMModel
-        # if(args.usingLLM):
-        #     self.kge_model = LLMKGEModel(args,args.LLMModel)
-        # else:
+
+#初始化kgeModel类
         self.kge_model = KGEModel(args, args.model)
-        
         if args.setting == 'LLM':
             self.LLM_kge_model = LLMKGEModel(args,args.LLMModel)
 
@@ -115,6 +118,7 @@ class KGETrainer():
             [{'params': self.entity_embedding},
              {'params': self.relation_embedding}], lr=args.lr
         )
+
 
     def before_test_load(self):
         state = torch.load(os.path.join(self.args.state_dir, self.args.name + '.best'),
@@ -146,6 +150,8 @@ class KGETrainer():
         os.rename(os.path.join(self.args.state_dir, self.args.name + '.' + str(best_epoch) + '.ckpt'),
                   os.path.join(self.args.state_dir, self.args.name + '.best'))
 
+
+#llm不需要训练，仅collection、isolation
     def train(self):
         best_epoch = 0
         best_mrr = 0
@@ -224,7 +230,7 @@ class KGETrainer():
         elif self.args.setting == 'Isolation':
             eval_res = self.evaluate(eval_split='test')
 
-#这里前面默认取的是best模型
+#collection的eval函数，这里前面默认取的是best模型
     def evaluate_multi(self, eval_split='valid'):
 
         if eval_split == 'test':
@@ -307,7 +313,7 @@ class KGETrainer():
             results['hits@5'], results['hits@10']))
 
         return results
-
+#isolation的eval函数
     def evaluate(self, eval_split='valid'):
         results = ddict(float)
 
@@ -370,7 +376,7 @@ class KGETrainer():
     
 
 
-
+#llm的eval函数，metrics为MRR、hit@，这个版本每获得一个测试数据的还是计算的135个实体的打分
     def LLMevaluate_MRR(self, eval_split='valid'):
         
         if eval_split == 'test':
@@ -388,8 +394,8 @@ class KGETrainer():
         all_triple_idx = []
         all_one2n = []
         all_neighbors = []
-        # # 设置计数器
-        # batch_count = 0
+        # 设置计数器
+        batch_count = 0
 
         # 循环迭代数据加载器，并收集每个批次的数据
         for batch in dataloader:
@@ -399,12 +405,12 @@ class KGETrainer():
             all_triple_idx.append(triple_idx)
             all_one2n.append(one2n)    
             all_neighbors.append(neighbor)    
-            # # 增加计数器
-            # batch_count += 1
+            # 增加计数器
+            batch_count += 1
             
-            # # 如果计数器达到三，则退出循环
-            # if batch_count >= 1:
-            #     break
+            # 如果计数器达到三，则退出循环
+            if batch_count >= 1:
+                break
         #print(type(all_one2n[0])) #65个len10的list的集合
         #print(type(all_one2n[0][0]))
         # 使用 torch.cat 将列表中的张量连接起来
@@ -438,6 +444,7 @@ class KGETrainer():
         # print("看看正确实体的位置对不对")
         # print(tail_idx)
         #得到score
+        all_triplets = all_triplets.tolist()
         pred = self.LLM_kge_model.forward((all_triplets, None), all_one2n, all_neighbors, self.h2rt_all)
         # 打开文件并将pred写入文件中
         with open(f'results/{self.args.name}_{self.args.num_triplets}_{self.args.num_threads}_pred.txt', 'w') as f:
@@ -525,11 +532,19 @@ class KGETrainer():
 
 
 
-
+#llm的eval函数，metrics为待定，加入了neo4j数据库操作
     def LLMevaluate_PRAUC(self, eval_split='valid'):
         
 
-        with_interaction = True
+
+        # Neo4j数据库连接参数
+        uri = "bolt://137.132.92.43:7687"
+        username = "neo4j"
+        password = "Xiao001112"  # 请替换为你的实际密码
+
+        # 连接到Neo4j数据库
+        graph = Graph(uri, auth=(username, password))
+
 
 
         if eval_split == 'test':
@@ -600,66 +615,44 @@ class KGETrainer():
             # print(len(client_tail_idx))
             # print(len(client_h2rt))
             # 得到score
-            if not with_interaction:
-                pred = self.LLM_kge_model.forward_PRAUC((client_triplets, None), client_one2n, client_neighbors, client_h2rt)
-                pred = torch.tensor(pred, device=self.args.gpu)
+            client_triplets = client_triplets.tolist()
+            pred = self.LLM_kge_model.forward_PRAUC(client_triplets, self.all_client_data, client_idx)
+            pred = torch.tensor(pred, device=self.args.gpu)
 
-                b_range = torch.arange(pred.size()[0], device=self.args.gpu)
-                target_pred = pred[b_range, client_rel_idx]
-                pred = torch.where(client_labels.byte(), -torch.ones_like(pred) * 10000000, pred)
-                pred[b_range, client_rel_idx] = target_pred
-                # 保存张量到文件
-                torch.save(pred, f'{self.args.name}_{self.args.num_triplets}_{self.args.num_threads}_client{client_idx}.pt')
-                print("看一下pred长度", pred.size())
-                ranks = 1 + torch.argsort(torch.argsort(pred, dim=1, descending=True),
-                                        dim=1, descending=False)[b_range, client_rel_idx]
-                print("看一眼ranks形状",len(ranks))
-                ranks = ranks.float()
-            elif with_interaction:
-                pred = self.LLM_kge_model.forward_PRAUC((client_triplets, None), all_one2n, all_neighbors, self.h2rt_all)
-                pred = torch.tensor(pred, device=self.args.gpu)
-
-                b_range = torch.arange(pred.size()[0], device=self.args.gpu)
-                target_pred = pred[b_range, client_rel_idx]
-                pred = torch.where(client_labels.byte(), -torch.ones_like(pred) * 10000000, pred)
-                pred[b_range, client_rel_idx] = target_pred
-                # 保存张量到文件
-                torch.save(pred, f'{self.args.name}_{self.args.num_triplets}_{self.args.num_threads}_client{client_idx}.pt')
-                print("看一下pred长度", pred.size())
-                ranks = 1 + torch.argsort(torch.argsort(pred, dim=1, descending=True),
-                                        dim=1, descending=False)[b_range, client_rel_idx]
-                print("看一眼ranks形状",len(ranks))
-                ranks = ranks.float()                
-            client_ranks[client_idx].extend(ranks.tolist())
+            # 保存张量到文件
+            torch.save(pred, f'{self.args.name}_{self.args.num_triplets}_{self.args.num_threads}_client{client_idx}.pt')
+            print("看一下pred长度", pred.size())
+            print(pred.shape)
+            print(pred)
 
 
-        for i in range(self.args.num_client):
-            if len(client_ranks[i]) == 0:
-                continue
-            results = ddict(float)
-            ranks = torch.tensor(client_ranks[i])
-            count = torch.numel(ranks)
-            results['count'] = count
-            results['mr'] = torch.sum(ranks).item() / count
-            results['mrr'] = torch.sum(1.0 / ranks).item() / count
-            for k in [1, 5, 10]:
-                results['hits@{}'.format(k)] = torch.numel(ranks[ranks <= k]) / count
-            logging.info('Client {}: mrr: {:.4f}, hits@1: {:.4f}, hits@5: {:.4f}, hits@10: {:.4f}'.format(
-                i, results['mrr'], results['hits@1'],
-                results['hits@5'], results['hits@10']))
+        # for i in range(self.args.num_client):
+        #     if len(client_ranks[i]) == 0:
+        #         continue
+        #     results = ddict(float)
+        #     ranks = torch.tensor(client_ranks[i])
+        #     count = torch.numel(ranks)
+        #     results['count'] = count
+        #     results['mr'] = torch.sum(ranks).item() / count
+        #     results['mrr'] = torch.sum(1.0 / ranks).item() / count
+        #     for k in [1, 5, 10]:
+        #         results['hits@{}'.format(k)] = torch.numel(ranks[ranks <= k]) / count
+        #     logging.info('Client {}: mrr: {:.4f}, hits@1: {:.4f}, hits@5: {:.4f}, hits@10: {:.4f}'.format(
+        #         i, results['mrr'], results['hits@1'],
+        #         results['hits@5'], results['hits@10']))
 
-        # 计算所有客户端的总体结果
-        all_ranks = [rank for client in client_ranks.values() for rank in client]
-        results = ddict(float)
-        ranks = torch.tensor(all_ranks)
-        count = torch.numel(ranks)
-        results['count'] = count
-        results['mr'] = torch.sum(ranks).item() / count
-        results['mrr'] = torch.sum(1.0 / ranks).item() / count
-        for k in [1, 5, 10]:
-            results['hits@{}'.format(k)] = torch.numel(ranks[ranks <= k]) / count
-        logging.info('Overall: mrr: {:.4f}, hits@1: {:.4f}, hits@5: {:.4f}, hits@10: {:.4f}'.format(
-            results['mrr'], results['hits@1'],
-            results['hits@5'], results['hits@10']))
+        # # 计算所有客户端的总体结果
+        # all_ranks = [rank for client in client_ranks.values() for rank in client]
+        # results = ddict(float)
+        # ranks = torch.tensor(all_ranks)
+        # count = torch.numel(ranks)
+        # results['count'] = count
+        # results['mr'] = torch.sum(ranks).item() / count
+        # results['mrr'] = torch.sum(1.0 / ranks).item() / count
+        # for k in [1, 5, 10]:
+        #     results['hits@{}'.format(k)] = torch.numel(ranks[ranks <= k]) / count
+        # logging.info('Overall: mrr: {:.4f}, hits@1: {:.4f}, hits@5: {:.4f}, hits@10: {:.4f}'.format(
+        #     results['mrr'], results['hits@1'],
+        #     results['hits@5'], results['hits@10']))
 
-        return results
+        #return results

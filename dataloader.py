@@ -158,8 +158,8 @@ class TestDataset_Entire(Dataset):
         return torch.FloatTensor(y)
 
 
-
-class TestDataset_Entire_with_hr2t(Dataset):
+#用于llm，加入了当前三元组在全局的邻居信息
+class TestDataset_Entire_llm(Dataset):
     #    test_dataset = TestDataset_Entire(test_triples, all_triples, nentity, test_client_idx, ent_mask)
     def __init__(self, triples, all_true_triples, nrelation, triple_client_idx=None, ent_mask=None):
         self.len = len(triples)
@@ -367,8 +367,8 @@ def find_common_entities(client_entities):
             common_entities[(client1, client2)] = common
     return common_entities
 
-#用于llm
-def get_task_dataset_entire_with_hr2t(data, args):
+#用于llm获取数据集，获得train、test、valid的dataloader、all_client_data (a,b,c)三元组list（按client_idx分开）
+def get_task_dataset_entire_llm(data, args):
     train_edge_index = np.array([[], []], dtype=np.int32)
     train_edge_type = np.array([], dtype=np.int32)
 
@@ -495,13 +495,13 @@ def get_task_dataset_entire_with_hr2t(data, args):
     for h, r, t in all_triples:
         h2rt_all[h].append([r, t])
     train_dataset = TrainDataset(train_triples, nentity, args.num_neg)
-    valid_dataset = TestDataset_Entire_with_hr2t(valid_triples, all_triples, nrelation, valid_client_idx, ent_mask)
-    test_dataset = TestDataset_Entire_with_hr2t(test_triples, all_triples, nrelation, test_client_idx, ent_mask)
+    valid_dataset = TestDataset_Entire_llm(valid_triples, all_triples, nrelation, valid_client_idx, ent_mask)
+    test_dataset = TestDataset_Entire_llm(test_triples, all_triples, nrelation, test_client_idx, ent_mask)
 
     return train_dataset, valid_dataset, test_dataset, nrelation, nentity, h2rt_all, all_client_data
 
 
-
+# 用于fede联邦
 def get_all_clients(all_data, args):
     all_ent = np.array([], dtype=int)
     #reshape展平为一维数组，然后union1d指取并集
